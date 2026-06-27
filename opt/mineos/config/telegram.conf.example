@@ -1,0 +1,17 @@
+# mineOS - telegram.conf (TEMPLATE)
+# Copia in telegram.conf e compila per abilitare le notifiche Telegram.
+# Il file reale NON va committato (contiene il token del bot; vedi .gitignore).
+#
+# Come ottenere i valori:
+#   1. Crea un bot con @BotFather -> ottieni TELEGRAM_BOT_TOKEN.
+#   2. Avvia una chat col bot (o aggiungilo a un gruppo) e invia un messaggio.
+#   3. Ricava il chat_id:
+#        curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | jq '.result[].message.chat.id'
+#
+# Se questo file non esiste, le notifiche vengono saltate silenziosamente.
+
+TELEGRAM_BOT_TOKEN="123456789:ABCdefGhIJKlmNoPQRstuVWXyz"
+TELEGRAM_CHAT_ID="123456789"
+
+# Abilita/disabilita le notifiche senza rimuovere il file (1 = on, 0 = off).
+TELEGRAM_ENABLED="1"

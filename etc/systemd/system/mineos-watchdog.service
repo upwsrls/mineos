@@ -1,0 +1,32 @@
+# /etc/systemd/system/mineos-watchdog.service
+#
+# Sorveglia il mining agent: hashrate a zero, temperature oltre soglia,
+# GPU bloccata (nvidia-smi/rocm-smi che non risponde). Agisce di conseguenza
+# (restart dell'agent o, nei casi gravi, reboot). Gira in loop continuo.
+#
+# Abbinare a un .timer NON è necessario: il watchdog ha il suo loop interno con
+# sleep. In alternativa si può usare un mineos-watchdog.timer ogni 60s con un
+# servizio oneshot; qui scegliamo il modello "daemon" per latenza minore.
+
+[Unit]
+Description=mineOS watchdog (hashrate/temperatura/GPU hang)
+After=mineos-agent.service
+# Ha senso solo se l'agent è (o dovrebbe essere) attivo.
+Wants=mineos-agent.service
+ConditionPathExists=/opt/mineos/state/first-boot.done
+
+[Service]
+Type=simple
+ExecStart=/opt/mineos/bin/watchdog.sh
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+# Il watchdog può aver bisogno di riavviare servizi / leggere lo stato GPU.
+ProtectSystem=strict
+ReadWritePaths=/opt/mineos/logs /opt/mineos/state
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

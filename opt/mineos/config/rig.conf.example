@@ -1,0 +1,19 @@
+# mineOS - rig.conf (TEMPLATE)
+# Copia in rig.conf e adatta. Normalmente generato dal wizard di first-boot.
+
+GPU_VENDOR="nvidia"                 # nvidia | amd | both
+MINER="trex"                        # trex | lolminer | srbminer
+ALGO="kawpow"
+
+# Limiti termici/potenza (0 = non gestito da mineOS)
+GPU_POWER_LIMIT_W="0"               # es. 120 (NVIDIA: nvidia-smi -pl)
+GPU_TEMP_LIMIT_C="75"               # soglia warning per watchdog
+GPU_CORE_OFFSET="0"
+GPU_MEM_OFFSET="0"
+
+# Watchdog
+WATCHDOG_HASHRATE_MIN="0"           # 0 = solo controllo "hashrate non zero"
+WATCHDOG_ZERO_GRACE_SEC="300"       # restart se sotto soglia per N secondi
+
+# Profit-switch automatico (richiede profit-switch.conf). true | false
+PROFIT_SWITCH="false"

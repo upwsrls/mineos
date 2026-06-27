@@ -1,0 +1,31 @@
+# /etc/systemd/system/mineos-firstboot.service
+#
+# Esegue il setup iniziale UNA sola volta al primo avvio.
+# Lo script si auto-disabilita al termine (systemctl disable + flag first-boot.done),
+# quindi l'unità è abilitata nell'immagine ma gira solo finché il setup non è completo.
+
+[Unit]
+Description=mineOS first boot setup (rilevamento GPU, driver, wizard, miner)
+# Serve rete per scaricare driver e miner.
+Wants=network-online.target
+After=network-online.target
+# Non rieseguire se il setup è già stato completato.
+ConditionPathExists=!/opt/mineos/state/first-boot.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/mineos/bin/first-boot-setup.sh
+# Il wizard è interattivo: lo agganciamo alla console di sistema.
+# (Per immagini pre-configurate usare invece --noninteractive con env file.)
+StandardInput=tty
+StandardOutput=journal+console
+StandardError=journal+console
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+# Niente restart automatico: se fallisce vogliamo intervenire manualmente.
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+#
+# /opt/mineos/bin/mineos-agent.sh
+#
+# mineOS - Mining agent
+# ---------------------
+# Avviato da systemd (mineos-agent.service). Compiti:
+#   1. Carica rig.conf / wallet.conf / pools.conf.
+#   2. Applica (opzionale) power limit / overclock GPU.
+#   3. Costruisce la riga di comando del miner scelto (trex/lolminer/srbminer),
+#      abilitando l'API HTTP locale che il watchdog interroga per l'hashrate.
+#   4. Lancia il miner in foreground e gestisce il GRACEFUL SHUTDOWN
+#      (inoltra SIGTERM/SIGINT al processo figlio e attende che chiuda).
+#   5. Logga in modo strutturato (via common.sh -> journald + file).
+#
+# Pensato per uso 24/7: nessun comando rischioso, fallisce in modo esplicito,
+# scrive in state/agent.env i parametri che servono al watchdog.
+#
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
+
+# Porte API locali (una per miner; sempre bind su loopback).
+API_PORT_TREX=4067
+API_PORT_LOL=4068
+API_PORT_SRB=4069
+
+MINER_PID=""          # PID del processo miner figlio
+AGENT_ENV="${MINEOS_STATE}/agent.env"   # consumato dal watchdog
+
+# ----------------------------------------------------------------------------
+# Caricamento configurazione
+# ----------------------------------------------------------------------------
+load_all_conf() {
+    load_conf "${MINEOS_CONFIG}/rig.conf"
+    load_conf "${MINEOS_CONFIG}/wallet.conf"
+    load_conf "${MINEOS_CONFIG}/pools.conf"
+
+    # Validazioni minime: meglio fallire subito che minare "a vuoto".
+    : "${MINER:?MINER non definito in rig.conf}"
+    : "${ALGO:?ALGO non definito in rig.conf}"
+    : "${POOL_URL:?POOL_URL non definito in pools.conf}"
+    : "${POOL_USER:?POOL_USER non definito in pools.conf}"
+    : "${POOL_PASS:=x}"
+    : "${GPU_VENDOR:=$(detect_gpu_vendor)}"
+    : "${GPU_POWER_LIMIT_W:=0}"
+    : "${GPU_CORE_OFFSET:=0}"
+    : "${GPU_MEM_OFFSET:=0}"
+
+    log INFO "Config caricata: miner=$MINER algo=$ALGO pool=$POOL_URL user=$POOL_USER"
+}
+
+# Estrae host:porta da un URL tipo stratum+tcp://host:porta (per i miner che
+# vogliono pool senza schema).
+pool_hostport() {
+    echo "${POOL_URL#*://}"
+}
+
+# ----------------------------------------------------------------------------
+# Overclock / power limit (best effort, non blocca il mining se fallisce)
+# ----------------------------------------------------------------------------
+apply_nvidia_tuning() {
+    command -v nvidia-smi >/dev/null || return 0
+    # Abilita persistence mode per stabilità 24/7.
+    run nvidia-smi -pm 1 || log WARN "nvidia-smi -pm 1 fallito."
+    if [[ "${GPU_POWER_LIMIT_W}" != "0" ]]; then
+        log INFO "Imposto power limit NVIDIA a ${GPU_POWER_LIMIT_W}W"
+        run nvidia-smi -pl "${GPU_POWER_LIMIT_W}" || log WARN "Power limit non applicato."
+    fi
+    # OC core/mem via clock offset (richiede coolbits/driver recenti).
+    if [[ "${GPU_CORE_OFFSET}" != "0" || "${GPU_MEM_OFFSET}" != "0" ]]; then
+        log INFO "OC NVIDIA core=${GPU_CORE_OFFSET} mem=${GPU_MEM_OFFSET} (best effort)."
+        # L'API esatta dipende dal driver; lasciamo l'OC fine ad uno step separato.
+    fi
+}
+
+apply_amd_tuning() {
+    command -v rocm-smi >/dev/null || return 0
+    if [[ "${GPU_POWER_LIMIT_W}" != "0" ]]; then
+        log INFO "Imposto power cap AMD a ${GPU_POWER_LIMIT_W}W (best effort)."
+        run rocm-smi --setpoweroverdrive "${GPU_POWER_LIMIT_W}" || log WARN "Power cap AMD non applicato."
+    fi
+}
+
+apply_tuning() {
+    case "${GPU_VENDOR}" in
+        nvidia) apply_nvidia_tuning ;;
+        amd)    apply_amd_tuning ;;
+        both)   apply_nvidia_tuning; apply_amd_tuning ;;
+    esac
+}
+
+# ----------------------------------------------------------------------------
+# Localizzazione binario del miner
+# ----------------------------------------------------------------------------
+miner_dir() { echo "${MINEOS_MINERS}/${MINER}/current"; }
+
+find_miner_binary() {
+    local dir; dir="$(miner_dir)"
+    [[ -d "$dir" ]] || die "Miner '$MINER' non installato (manca $dir). Esegui update-mineos.sh."
+    local bin=""
+    case "$MINER" in
+        trex)     bin="$(find "$dir" -maxdepth 1 -type f -name 't-rex' | head -1)" ;;
+        lolminer) bin="$(find "$dir" -maxdepth 1 -type f -name 'lolMiner' | head -1)" ;;
+        srbminer) bin="$(find "$dir" -maxdepth 1 -type f -name 'SRBMiner-MULTI' | head -1)" ;;
+        *)        bin="$(find "$dir" -maxdepth 1 -type f -perm -u+x | head -1)" ;;
+    esac
+    [[ -n "$bin" && -x "$bin" ]] || die "Binario del miner '$MINER' non trovato/eseguibile in $dir."
+    echo "$bin"
+}
+
+# ----------------------------------------------------------------------------
+# Costruzione argomenti per miner + scrittura agent.env per il watchdog
+# ----------------------------------------------------------------------------
+build_args() {
+    local hostport; hostport="$(pool_hostport)"
+    case "$MINER" in
+        trex)
+            API_PORT="$API_PORT_TREX"; API_TYPE="trex"
+            MINER_ARGS=(
+                -a "$ALGO"
+                -o "$POOL_URL"
+                -u "$POOL_USER"
+                -p "$POOL_PASS"
+                --api-bind-http "127.0.0.1:${API_PORT}"
+                # Riavvio interno disattivato: la gestione restart la fa systemd/watchdog.
+                --no-watchdog
+            )
+            ;;
+        lolminer)
+            API_PORT="$API_PORT_LOL"; API_TYPE="lolminer"
+            MINER_ARGS=(
+                --algo "$ALGO"
+                --pool "$hostport"
+                --user "$POOL_USER"
+                --pass "$POOL_PASS"
+                --apiport "$API_PORT"
+            )
+            ;;
+        srbminer)
+            API_PORT="$API_PORT_SRB"; API_TYPE="srbminer"
+            MINER_ARGS=(
+                --algorithm "$ALGO"
+                --pool "$hostport"
+                --wallet "$POOL_USER"
+                --password "$POOL_PASS"
+                --api-enable
+                --api-port "$API_PORT"
+            )
+            ;;
+        *) die "Miner non supportato: $MINER" ;;
+    esac
+
+    # Pubblica per il watchdog come interrogare l'API e quali soglie usare.
+    umask 077
+    cat > "$AGENT_ENV" <<EOF
+API_TYPE="${API_TYPE}"
+API_PORT="${API_PORT}"
+MINER="${MINER}"
+GPU_VENDOR="${GPU_VENDOR}"
+EOF
+    log INFO "agent.env scritto (api_type=$API_TYPE port=$API_PORT)."
+}
+
+# ----------------------------------------------------------------------------
+# Graceful shutdown
+# ----------------------------------------------------------------------------
+graceful_stop() {
+    log INFO "Segnale di stop ricevuto: chiusura graceful del miner (pid=${MINER_PID:-n/a})."
+    if [[ -n "$MINER_PID" ]] && kill -0 "$MINER_PID" 2>/dev/null; then
+        # Chiediamo prima una chiusura pulita (SIGINT, molti miner lo gestiscono).
+        kill -INT "$MINER_PID" 2>/dev/null || true
+        # Attendi fino a 30s, poi forza.
+        for _ in $(seq 1 30); do
+            kill -0 "$MINER_PID" 2>/dev/null || break
+            sleep 1
+        done
+        if kill -0 "$MINER_PID" 2>/dev/null; then
+            log WARN "Miner non chiuso entro 30s: invio SIGKILL."
+            kill -KILL "$MINER_PID" 2>/dev/null || true
+        fi
+    fi
+    # Pulisce lo stato pubblicato.
+    rm -f "$AGENT_ENV" 2>/dev/null || true
+    log INFO "Agent terminato."
+    exit 0
+}
+
+# ----------------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------------
+main() {
+    require_root
+    load_all_conf
+    apply_tuning
+    build_args
+
+    local bin; bin="$(find_miner_binary)"
+    log INFO "Avvio miner: $bin ${MINER_ARGS[*]}"
+
+    # Intercetta i segnali di systemd per il graceful shutdown.
+    trap graceful_stop SIGTERM SIGINT
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log INFO "DRY_RUN: non avvio realmente il miner."
+        exit 0
+    fi
+
+    # Lancia il miner in background e attendi: così il trap può agire mentre
+    # il processo gira (con 'exec' i trap non verrebbero eseguiti).
+    "$bin" "${MINER_ARGS[@]}" &
+    MINER_PID=$!
+    log INFO "Miner avviato con pid=$MINER_PID."
+    notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL}"
+
+    # 'wait' ritorna quando il miner esce o quando arriva un segnale.
+    wait "$MINER_PID"
+    local rc=$?
+    log WARN "Miner uscito con codice $rc. systemd applicherà la policy di restart."
+    rm -f "$AGENT_ENV" 2>/dev/null || true
+    exit "$rc"
+}
+
+main "$@"

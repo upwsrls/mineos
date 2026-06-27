@@ -1,0 +1,76 @@
+#cloud-config
+# ===========================================================================
+# mineOS - Ubuntu Server 24.04 autoinstall (subiquity / cloud-init)
+# ---------------------------------------------------------------------------
+# Questo file pilota l'installazione NON presidiata di Ubuntu Server e, a fine
+# installazione, installa il payload mineOS nel sistema target e abilita i
+# servizi systemd. Viene letto dall'installer perche' passiamo da GRUB:
+#     autoinstall ds=nocloud;s=/cdrom/server/
+#
+# NB: 'password' va rigenerata sull'host di build con:
+#     openssl passwd -6 'LA_TUA_PASSWORD'      (oppure: mkpasswd -m sha-512)
+# e incollata al posto del placeholder qui sotto.
+# ===========================================================================
+autoinstall:
+  version: 1
+
+  # Lingua/tastiera: adatta se necessario.
+  locale: en_US.UTF-8
+  keyboard:
+    layout: it
+
+  # --- Rete: DHCP su tutte le interfacce ethernet --------------------------
+  network:
+    version: 2
+    ethernets:
+      all-en:
+        match:
+          name: "en*"
+        dhcp4: true
+        # 'optional' evita che il boot resti appeso se un'interfaccia e' giu'.
+        optional: true
+
+  # --- Identita' del sistema ----------------------------------------------
+  identity:
+    hostname: mineos-rig
+    username: miner
+    # PLACEHOLDER: sostituisci con un hash SHA-512 reale (vedi nota sopra).
+    password: "$6$REPLACE_ME$REPLACE_WITH_REAL_SHA512_HASH"
+
+  # SSH abilitato per la gestione remota del rig.
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  # --- Storage: installazione su tutto il disco (LVM disattivato) ----------
+  # 'direct' usa l'intero disco senza LVM: piu' semplice per un rig single-disk.
+  storage:
+    layout:
+      name: direct
+
+  # --- Pacchetti minimi necessari gia' in fase di installazione ------------
+  packages:
+    - curl
+    - tar
+    - gzip
+    - ca-certificates
+    - pciutils
+    - jq
+
+  # Aggiornamenti durante l'installer disattivati: li gestisce update-mineos.sh.
+  updates: security
+  package_update: true
+  package_upgrade: false
+
+  # --- Comandi post-installazione (target montato in /target) --------------
+  # /cdrom = ISO montata. Estraiamo il payload mineOS nel sistema installato
+  # e lanciamo l'installer in-target che abilita i servizi systemd.
+  late-commands:
+    - mkdir -p /target/opt/mineos
+    - tar -xzf /cdrom/mineos/mineos-payload.tar.gz -C /target/
+    - cp /cdrom/mineos/install.sh /target/root/mineos-install.sh
+    - curtin in-target --target=/target -- bash /root/mineos-install.sh
+    - rm -f /target/root/mineos-install.sh
+
+  # Reboot automatico a fine installazione.
+  shutdown: reboot

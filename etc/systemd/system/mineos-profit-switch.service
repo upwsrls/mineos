@@ -1,0 +1,22 @@
+# /etc/systemd/system/mineos-profit-switch.service
+#
+# Esegue una valutazione di profit-switch (oneshot). Attivato dal timer
+# omonimo. Lo script si auto-disabilita logicamente se PROFIT_SWITCH non e'
+# "true" in rig.conf, quindi e' sicuro lasciarlo abilitato.
+
+[Unit]
+Description=mineOS profit-switch (valutazione algoritmo piu' profittevole)
+Wants=network-online.target
+After=network-online.target mineos-agent.service
+ConditionPathExists=/opt/mineos/state/first-boot.done
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mineos/bin/profit-switch.sh
+Nice=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/mineos/config /opt/mineos/logs /opt/mineos/state
+ProtectHome=yes

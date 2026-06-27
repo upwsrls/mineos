@@ -1,0 +1,32 @@
+# ===========================================================================
+# mineOS - .gitignore
+# ===========================================================================
+
+# --- Artefatti di build ----------------------------------------------------
+/dist/
+/build/work/
+*.iso
+*.tar.gz
+
+# --- Credenziali e configurazione runtime (NON committare) -----------------
+# I file di config reali vengono generati sul rig al primo avvio e contengono
+# le credenziali Kryptex. Versioniamo solo i template *.example.
+opt/mineos/config/*.conf
+!opt/mineos/config/*.conf.example
+
+# --- Dati di runtime -------------------------------------------------------
+opt/mineos/logs/
+opt/mineos/state/
+opt/mineos/miners/
+opt/mineos/backups/
+
+# --- Log generici ----------------------------------------------------------
+*.log
+
+# --- Sistema operativo / editor --------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

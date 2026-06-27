@@ -1,0 +1,34 @@
+# mineOS - profit-switch.conf (TEMPLATE)
+# Copia in profit-switch.conf e adatta. Il file reale NON va committato.
+#
+# Abilita anche PROFIT_SWITCH="true" in rig.conf, altrimenti lo switch non gira.
+
+# Abilita/disabilita il profit-switch senza rimuovere il file (1 = on, 0 = off).
+PROFIT_SWITCH_ENABLED="1"
+
+# Cambia algoritmo solo se il candidato migliore supera l'attuale di questa
+# percentuale (isteresi anti-flapping).
+HYSTERESIS_PCT="5"
+
+# API di profittabilita' (WhatToMine). Se irraggiungibile, si usa STATIC_SCORE.
+WTM_API_URL="https://whattomine.com/coins.json"
+
+# --- Candidati --------------------------------------------------------------
+# Formato per riga:
+#   "ALGO|MINER|POOL_URL|WTM_TAG|OUR_HASHRATE|REF_HASHRATE|STATIC_SCORE"
+#
+#   ALGO          algoritmo (come atteso dal miner e da rig.conf)
+#   MINER         trex | lolminer | srbminer
+#   POOL_URL      endpoint stratum Kryptex per quel coin (dalla dashboard)
+#   WTM_TAG       tag del coin su WhatToMine (es. RVN, ETC, ERG)
+#   OUR_HASHRATE  hashrate REALE del tuo rig su quell'algo, in H/s (calibralo!)
+#   REF_HASHRATE  hashrate a cui si riferisce il btc_revenue dell'API, in H/s
+#   STATIC_SCORE  punteggio di fallback se l'API non e' disponibile (relativo)
+#
+# Suggerimento: calibra OUR_HASHRATE osservando l'hashrate effettivo per algo.
+# REF_HASHRATE serve a normalizzare il revenue dell'API alla tua potenza.
+CANDIDATES=(
+  "kawpow|trex|stratum+tcp://rvn.kryptex.network:7777|RVN|18000000|1000000000|1.00"
+  "etchash|trex|stratum+tcp://etc.kryptex.network:7777|ETC|60000000|1000000000|1.10"
+  "autolykos2|lolminer|stratum+tcp://ergo.kryptex.network:7777|ERG|180000000|1000000000|0.90"
+)

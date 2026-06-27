@@ -1,0 +1,19 @@
+# /etc/systemd/system/mineos-profit-switch.timer
+#
+# Pianifica la valutazione del profit-switch ogni 4 ore. Lo switch effettivo
+# avviene solo se PROFIT_SWITCH="true" in rig.conf e se un algoritmo supera
+# la soglia di isteresi: il timer puo' restare sempre abilitato.
+
+[Unit]
+Description=mineOS profit-switch ogni 4 ore
+
+[Timer]
+# Prima esecuzione 15 min dopo il boot, poi ogni 4 ore.
+OnBootSec=15min
+OnUnitActiveSec=4h
+# Recupera le esecuzioni perse (es. rig spento).
+Persistent=true
+Unit=mineos-profit-switch.service
+
+[Install]
+WantedBy=timers.target

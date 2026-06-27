@@ -1,0 +1,7 @@
+# mineOS - wallet.conf (TEMPLATE)
+# Copia in wallet.conf e compila. Il file reale NON va committato (vedi .gitignore).
+# Normalmente viene generato in automatico dal wizard di first-boot-setup.sh.
+
+KRX_USERNAME="il-tuo-username-o-wallet-kryptex"
+KRX_WORKER="nome-worker"
+KRX_COIN="kawpow"

@@ -1,0 +1,9 @@
+# mineOS - pools.conf (TEMPLATE)
+# Copia in pools.conf e compila con i dati reali della tua dashboard Kryptex.
+# Il file reale NON va committato (vedi .gitignore).
+
+# Endpoint stratum Kryptex per il coin scelto (host/porta dalla dashboard).
+POOL_URL="stratum+tcp://kawpow.kryptex.network:7777"
+# Formato richiesto: username.worker
+POOL_USER="il-tuo-username.nome-worker"
+POOL_PASS="x"
