@@ -90,6 +90,7 @@ ensure_base_tools() {
 install_nvidia_driver() {
     if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
         log INFO "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+        verify_nvidia_gpu_visibility
         return 0
     fi
     local pm; pm="$(detect_pkg_mgr)"
@@ -126,6 +127,8 @@ install_nvidia_driver() {
         *) die "Installazione driver NVIDIA non supportata su questo package manager." ;;
     esac
     log INFO "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel."
+    apply_nvidia_boot_fix
+    apply_multigpu_grub_fix
     mark_reboot_required
 }
 
@@ -326,10 +329,11 @@ EOF
     if [[ -f "${MINEOS_CONFIG}/rig.conf" ]]; then
         log INFO "rig.conf già presente: lo mantengo."
     else
-        local default_miner
+        local default_miner="srbminer"   # Pearl/pearlhash e' il default mineOS
         case "$vendor" in
             amd) default_miner="srbminer" ;;
-            *)   default_miner="trex" ;;     # nvidia/both/none -> trex di default
+            nvidia) default_miner="srbminer" ;;  # Pearl su NVIDIA usa SRBMiner
+            *)   default_miner="srbminer" ;;
         esac
         # Alcuni algoritmi richiedono un miner specifico (es. pearlhash->srbminer):
         # in tal caso l'override prevale sul default per-vendor.
@@ -338,8 +342,8 @@ EOF
         cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
 # mineOS - configurazione rig
 GPU_VENDOR="${vendor}"
-MINER="${default_miner}"            # trex | lolminer | srbminer
-ALGO="${algo}"                      # algoritmo normalizzato (es. kawpow)
+MINER="${default_miner}"            # trex | lolminer | srbminer (Pearl -> srbminer)
+ALGO="${algo}"                      # algoritmo normalizzato (es. pearlhash)
 
 # Limiti termici/potenza (0 = non gestito da mineOS)
 GPU_POWER_LIMIT_W="0"               # es. 120 (NVIDIA: nvidia-smi -pl)
@@ -362,6 +366,21 @@ EOF
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
 }
 
+# Copia template OC Pearl/pearlhash se assente.
+setup_gpu_oc_config() {
+    if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
+        log INFO "gpu-oc.conf già presente."
+        return 0
+    fi
+    if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf.example" ]]; then
+        cp "${MINEOS_CONFIG}/gpu-oc.conf.example" "${MINEOS_CONFIG}/gpu-oc.conf"
+        chmod 600 "${MINEOS_CONFIG}/gpu-oc.conf"
+        log INFO "gpu-oc.conf creato da template (profili Pearl/pearlhash)."
+    else
+        log WARN "gpu-oc.conf.example mancante: OC automatico non configurato."
+    fi
+}
+
 # ============================================================================
 # STEP 5 - Finalizzazione
 # ============================================================================
@@ -369,6 +388,7 @@ EOF
 # partiranno da soli a ogni boot; nessuna condizione bloccante li frena
 # (l'agent ripulisce da solo il flag reboot-required al proprio avvio).
 enable_services() {
+    sysctl_safe enable mineos-gpu-oc.service mineos-gpu-fan.service
     sysctl_safe enable mineos-agent.service mineos-watchdog.service
     # Timer profit-switch sempre abilitato: lo script si auto-gate su rig.conf.
     sysctl_safe enable mineos-profit-switch.timer
@@ -376,6 +396,8 @@ enable_services() {
 
 # Avvia il mining adesso (caso "nessun reboot necessario").
 start_services_now() {
+    sysctl_safe start mineos-gpu-oc.service
+    sysctl_safe start mineos-gpu-fan.service
     sysctl_safe start mineos-agent.service mineos-watchdog.service
     sysctl_safe start mineos-profit-switch.timer
 
@@ -433,13 +455,23 @@ main() {
     check_already_done
     ensure_base_tools
 
+    log INFO "=== Inventario GPU hardware (sysfs_pci + lspci + drm + nvidia-smi) ==="
+    gpu_detection_report
+
     local vendor; vendor="$(detect_gpu_vendor)"
-    log INFO "GPU vendor rilevato: ${vendor}"
+    log INFO "GPU vendor rilevato: ${vendor} (count nvidia=$(detect_gpu_count nvidia) amd=$(detect_gpu_count amd))"
 
     install_drivers "$vendor"
+
+    # Se il driver NVIDIA e' gia' attivo (no reboot), verifica subito che tutte le GPU siano visibili.
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+        verify_nvidia_gpu_visibility
+    fi
+
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
+    setup_gpu_oc_config
 
     write_payout_summary
 

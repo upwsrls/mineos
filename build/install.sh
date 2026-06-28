@@ -21,9 +21,10 @@ MINER_PASS="miner"
 
 echo "[mineos-install] Configurazione permessi..."
 # Script eseguibili (tutti). Il tar potrebbe non preservare il bit +x: lo
-# forziamo qui, ESPLICITAMENTE sul first-boot (causa storica del 203/EXEC).
+# forziamo qui, ESPLICITAMENTE su ogni script (causa storica del 203/EXEC).
+find /opt/mineos/bin -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh 2>/dev/null || true
-chmod +x /opt/mineos/bin/first-boot-setup.sh 2>/dev/null || true
+chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh /opt/mineos/bin/fix-nvidia-boot.sh /opt/mineos/bin/fix-gpu-detect.sh /opt/mineos/bin/apply-gpu-oc.sh /opt/mineos/bin/gpu-fan-daemon.sh 2>/dev/null || true
 # Verifica bloccante: senza questo script il first boot non parte.
 if [[ ! -x /opt/mineos/bin/first-boot-setup.sh ]]; then
     echo "[mineos-install][ERRORE] /opt/mineos/bin/first-boot-setup.sh mancante o non eseguibile." >&2
@@ -32,6 +33,7 @@ fi
 # La cartella config contiene credenziali: accesso solo root.
 mkdir -p /opt/mineos/{config,state,logs,miners,backups}
 chmod 700 /opt/mineos/config
+chmod 755 /opt/mineos/miners /opt/mineos/state /opt/mineos/logs 2>/dev/null || true
 
 echo "[mineos-install] Garantisco le credenziali di default per '${MINER_USER}'..."
 # L'utente viene gia' creato dall'autoinstall (sezione 'identity'); qui
@@ -44,12 +46,45 @@ else
     echo "[mineos-install] Utente '${MINER_USER}' non presente: lo gestisce l'autoinstall."
 fi
 
+echo "[mineos-install] Fix boot NVIDIA i2c/ucsi (modprobe)..."
+if [[ -f /etc/modprobe.d/mineos-nvidia-i2c.conf ]]; then
+    echo "[mineos-install] modprobe.d mineOS presente nel payload."
+else
+    cat > /etc/modprobe.d/mineos-nvidia-i2c.conf <<'EOF'
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+    cat > /etc/modprobe.d/mineos-nvidia.conf <<'EOF'
+options nvidia NVreg_EnableUsbPd=0
+EOF
+fi
+if command -v update-initramfs >/dev/null 2>&1; then
+    update-initramfs -u \
+        && echo "[mineos-install] initramfs aggiornato (fix i2c NVIDIA)." \
+        || echo "[mineos-install] AVVISO: update-initramfs fallito (proseguo)."
+fi
+# Blacklist precoce via kernel cmdline (multi-GPU mining).
+if [[ -f /etc/default/grub ]] && ! grep -q 'modprobe.blacklist=i2c_nvidia_gpu' /etc/default/grub 2>/dev/null; then
+    sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT=".*\)"/\1 modprobe.blacklist=i2c_nvidia_gpu modprobe.blacklist=ucsi_ccg"/' /etc/default/grub \
+        && echo "[mineos-install] GRUB: blacklist i2c/ucsi aggiunta." \
+        || echo "[mineos-install] AVVISO: patch GRUB fallita (proseguo)."
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub \
+            && echo "[mineos-install] GRUB aggiornato." \
+            || echo "[mineos-install] AVVISO: update-grub fallito (proseguo)."
+    fi
+fi
+
 echo "[mineos-install] Reload systemd e abilitazione servizi..."
 systemctl daemon-reload
 
 # mineos-firstboot gira al primo avvio (rilevamento GPU, driver, wizard).
-# agent e watchdog vengono abilitati ma partiranno solo dopo il first boot
-# (hanno ConditionPathExists su first-boot.done).
+# agent e watchdog vengono abilitati subito; l'agent parte a ogni boot e fallisce
+# con messaggio chiaro se manca la config (nessuna ConditionPathExists bloccante).
+# Il watchdog attende first-boot.done (ConditionPathExists nel suo unit file).
+systemctl enable mineos-gpu-oc.service mineos-gpu-fan.service
 systemctl enable mineos-firstboot.service
 systemctl enable mineos-agent.service
 systemctl enable mineos-watchdog.service

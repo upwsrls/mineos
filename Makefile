@@ -7,7 +7,7 @@
 
 # --- Variabili configurabili (override: `make iso UBUNTU_VERSION=24.04.3`) ---
 PROJECT_NAME     := mineos
-UBUNTU_VERSION   ?= 24.04.2
+UBUNTU_VERSION   ?= 24.04.3
 UBUNTU_ISO_NAME  ?= ubuntu-$(UBUNTU_VERSION)-live-server-amd64.iso
 
 # --- Percorsi -------------------------------------------------------------
@@ -102,7 +102,7 @@ install-local: ## Installa mineOS sul sistema corrente (richiede root; usa DESTD
 	@# Abilita i servizi solo per un'installazione reale (DESTDIR vuoto).
 	@if [ -z "$(DESTDIR)" ]; then \
 		systemctl daemon-reload; \
-		systemctl enable mineos-firstboot.service mineos-agent.service mineos-watchdog.service; \
+		systemctl enable mineos-gpu-oc.service mineos-gpu-fan.service mineos-firstboot.service mineos-agent.service mineos-watchdog.service; \
 		systemctl enable mineos-profit-switch.timer; \
 		printf "Servizi abilitati. Riavvia per lanciare il first boot.\n"; \
 	else \

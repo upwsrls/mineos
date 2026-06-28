@@ -16,6 +16,7 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Build dell'ISO](#build-delliso)
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
+- [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
 - [Notifiche Telegram](#notifiche-telegram)
@@ -100,6 +101,8 @@ mineos/
 │   │   ├── first-boot-setup.sh       # setup primo avvio (driver, wizard, miner)
 │   │   ├── update-mineos.sh          # updater con rollback
 │   │   ├── mineos-agent.sh           # avvia il miner
+│   │   ├── fix-rig-pearl.sh          # fix one-shot su rig già installati
+│   │   ├── fix-nvidia-boot.sh        # fix boot i2c/ucsi_ccg NVIDIA
 │   │   └── watchdog.sh               # monitoraggio 24/7
 │   ├── config/                       # rig.conf, wallet.conf, pools.conf (chmod 700)
 │   ├── miners/                       # binari miner versionati + symlink "current"
@@ -159,6 +162,7 @@ openssl passwd -6 'LaTuaPasswordSicura'
   (es. `prl:7048`, `rvn:7031`, `etc:7033`, `erg:7021`, `kas:7011`).
 - **Pearl (PRL)**: di default mineOS mina **Pearl** (`prl`, algoritmo `pearlhash`) con
   **SRBMiner-MULTI** (selezionato automaticamente per `pearlhash` su NVIDIA/AMD).
+  T-Rex **non** supporta `pearlhash`: non impostare `MINER="trex"` per Pearl.
 - **Payout MANUALE**: mineOS **non** automatizza payout né conversioni. Il saldo si accumula
   sul tuo account Kryptex e i prelievi si eseguono **a mano dalla dashboard** `kryptex.com`
   (`PAYOUT_MODE="manual"` in `wallet.conf`; riepilogo in `state/payout.txt`).
@@ -168,7 +172,6 @@ openssl passwd -6 'LaTuaPasswordSicura'
 Dalla root del progetto puoi usare il Makefile:
 
 ```bash
-make iso        # genera l'ISO (scarica l'ISO Ubuntu se assente)
 make rebuild    # rebuild pulito: clean + payload + iso (consigliato dopo modifiche)
 ```
 
@@ -178,13 +181,13 @@ Oppure direttamente lo script:
 cd mineos/build
 ./build-iso.sh
 # Scarica l'ISO ufficiale Ubuntu (se assente), inietta tutto e produce:
-#   mineos-24.04.2-autoinstall-amd64.iso
+#   mineos-24.04.3-autoinstall-amd64.iso
 ```
 
 Se hai già l'ISO ufficiale:
 
 ```bash
-./build-iso.sh /percorso/ubuntu-24.04.2-live-server-amd64.iso
+./build-iso.sh /percorso/ubuntu-24.04.3-live-server-amd64.iso
 ```
 
 ---
@@ -197,7 +200,7 @@ Se hai già l'ISO ufficiale:
 
 ```bash
 lsblk                      # individua il DISCO USB (es. /dev/sdb), non una partizione
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
 sync
 ```
 
@@ -206,7 +209,7 @@ sync
 ```bash
 diskutil list                          # individua /dev/diskN
 diskutil unmountDisk /dev/diskN
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
 ```
 
 In alternativa puoi usare strumenti grafici come **balenaEtcher**.
@@ -241,6 +244,55 @@ journalctl -u mineos-agent -f          # log live del miner
 ```
 
 Controlla poi che il **worker** compaia online nella dashboard Kryptex.
+
+---
+
+## Fix su rig già installato (Pearl)
+
+Se il rig ha già mineOS ma il mining non parte (errori storici: binario trex, estrazione
+vuota, algoritmo `PRL` invece di `pearlhash`, permessi, servizio 203/EXEC), usa lo
+script di fix one-shot **senza reinstallare l'ISO**:
+
+```bash
+# Con credenziali Kryptex (consigliato)
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh
+
+# Se i miner sono corrotti/mancanti, forza reinstall
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
+
+Lo script corregge automaticamente:
+
+| Problema | Fix applicato |
+|----------|---------------|
+| `203/EXEC` su first-boot/agent | `chmod +x` su tutti gli script; servizi via `/bin/bash` |
+| Cartella miner vuota (tar flat T-Rex) | Re-estrazione robusta + symlink `current` |
+| `MINER=trex` con Pearl | Imposta `MINER=srbminer` + `ALGO=pearlhash` |
+| Pool/wallet errati | `prl.kryptex.network:7048`, `krxXXXXXX.worker` |
+| Agent inattivo | Riavvio `mineos-agent` + `mineos-watchdog` |
+
+Verifica dopo il fix:
+
+```bash
+systemctl status mineos-agent
+journalctl -u mineos-agent -f
+ls -la /opt/mineos/miners/srbminer/current/
+```
+
+Se hai aggiornato i file mineOS sul repo locale e vuoi propagarli sul rig senza
+reinstallare l'ISO:
+
+```bash
+# Sul PC di build (Linux)
+make payload
+scp dist/mineos-payload.tar.gz miner@IP-RIG:/tmp/
+
+# Sul rig
+sudo tar -xzf /tmp/mineos-payload.tar.gz -C /
+sudo bash /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
 
 ---
 
@@ -314,6 +366,38 @@ Modifica i file in `/opt/mineos/config/` e riavvia l'agent:
 sudo nano /opt/mineos/config/rig.conf      # MINER, ALGO, limiti termici/potenza
 sudo nano /opt/mineos/config/pools.conf    # POOL_URL, POOL_USER
 sudo systemctl restart mineos-agent
+```
+
+### Overclock automatico (Pearl / pearlhash)
+
+Profili per rig eterogenei (RTX 3090, GTX 1080 Ti, GTX 1080, GTX 1660 Ti/Super/1660):
+
+```bash
+# Copia e personalizza profili
+sudo cp /opt/mineos/config/gpu-oc.conf.example /opt/mineos/config/gpu-oc.conf
+sudo nano /opt/mineos/config/gpu-oc.conf
+
+# Applica subito (power limit, core/mem lock, curva ventole)
+sudo /opt/mineos/bin/apply-gpu-oc.sh
+
+# Anteprima senza modificare
+sudo /opt/mineos/bin/apply-gpu-oc.sh --dry-run
+
+# Ripristina default NVIDIA
+sudo /opt/mineos/bin/apply-gpu-oc.sh --reset
+```
+
+Ogni GPU riceve il profilo in base al nome (`nvidia-smi`). Servizi systemd:
+
+- `mineos-gpu-oc.service` — OC al boot (prima del miner)
+- `mineos-gpu-fan.service` — curva ventole continua (TEMP_LO..TEMP_HI → FAN_MIN..FAN_MAX)
+
+Verifica:
+
+```bash
+systemctl status mineos-gpu-oc mineos-gpu-fan
+nvidia-smi --query-gpu=index,name,power.limit,clocks.current.graphics,clocks.current.memory,temperature.gpu,fan.speed --format=csv
+cat /opt/mineos/state/gpu-oc-0.env
 ```
 
 ---
@@ -510,23 +594,99 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 ### L'installer si ferma o chiede conferme
 - Significa che il seed autoinstall non è stato letto. Verifica di aver buildato con `build-iso.sh` (che aggiunge `autoinstall ds=nocloud;s=/cdrom/server/` a GRUB) e non di aver flashato l'ISO Ubuntu vergine.
 
+### `nvidia-gpu i2c timeout` / `ucsi_ccg init failed -110` al boot
+- **Causa**: GPU NVIDIA da mining con funzione USB-C (.3) senza controller I2C reale. Il kernel prova `i2c_nvidia_gpu` + `ucsi_ccg` e fallisce con timeout. **Non blocca** CUDA/mining, ma sporca `tty1`.
+- **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot (modprobe + initramfs + GRUB).
+
+**File nell'ISO** (inclusi nel payload `opt` + `etc`):
+
+| Percorso | Contenuto |
+|----------|-----------|
+| `etc/modprobe.d/mineos-nvidia-i2c.conf` | `blacklist i2c_nvidia_gpu`, `blacklist ucsi_ccg` |
+| `etc/modprobe.d/mineos-nvidia.conf` | `options nvidia NVreg_EnableUsbPd=0` |
+| `opt/mineos/bin/fix-nvidia-boot.sh` | Script fix one-shot su rig esistente |
+
+- **Fix su rig già installato** (consigliato):
+
+```bash
+sudo /opt/mineos/bin/fix-nvidia-boot.sh
+sudo reboot
+```
+
+Oppure insieme al fix Pearl:
+
+```bash
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+sudo reboot
+```
+
+- **Fix manuale diretto** (recovery/single-user):
+
+```bash
+sudo tee /etc/modprobe.d/mineos-nvidia-i2c.conf <<'EOF'
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+sudo tee /etc/modprobe.d/mineos-nvidia.conf <<'EOF'
+options nvidia NVreg_EnableUsbPd=0
+EOF
+sudo update-initramfs -u
+sudo reboot
+```
+
+Dopo il reboot gli errori `i2c timeout` / `ucsi_ccg` non dovrebbero più comparire. Verifica che `nvidia-smi` funzioni normalmente.
+
 ### `nvidia-smi` non funziona / nessuna GPU
 - Spesso serve un **reboot** dopo l'installazione driver (mineOS lo segnala con il flag `reboot-required`).
 - Verifica Secure Boot disattivato.
 - Controlla i log: `journalctl -b | grep -i nvidia`.
 
+### GPU mancanti in nvidia-smi (es. RTX 3090 / GTX 1080 non rilevate, solo 1660)
+
+- **Causa tipica**: BAR/memoria PCIe insufficiente su rig multi-GPU eterogenei, riser non visti al boot, **Above 4G Decoding** disabilitato in BIOS.
+- **Diagnostica mineOS**:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh
+cat /opt/mineos/state/gpu-inventory.txt
+nvidia-smi -L
+lspci | grep -iE 'VGA|3D controller'
+```
+
+- Confronta `sysfs_pci` (hardware) vs `nvidia-smi` (driver). Se hardware > driver:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh --rescan-only
+sudo reboot
+```
+
+- **BIOS**: abilita **Above 4G Decoding** / **Large BAR** / **Re-Size BAR Support**.
+- mineOS aggiunge automaticamente `pci=realloc` in GRUB al first boot (multi-GPU).
+
 ### Il first boot diceva "Nessuna GPU rilevata" anche con `nvidia-smi` funzionante
-- **Risolto**: la rilevazione GPU ora è multi-metodo e non dipende solo da `lspci`. In cascata prova: `lspci` → `nvidia-smi`/`rocm-smi` → vendor ID in `/sys/class/drm/card*/device/vendor` (`0x10de` NVIDIA, `0x1002` AMD).
-- Inoltre il first boot **non si interrompe più** per avvisi minori: completa il setup, crea i file di config mancanti e avvia il mining automaticamente.
-- Verifica manuale della rilevazione: `source /opt/mineos/bin/lib/common.sh && detect_gpu_vendor`.
+- **Risolto**: rilevazione multi-metodo `sysfs_pci` → `lspci` (solo VGA/3D) → `sysfs_drm` → `nvidia-smi`.
+- Verifica manuale: `source /opt/mineos/bin/lib/common.sh && gpu_detection_report`
 
 ### Il miner non parte
 ```bash
 journalctl -u mineos-agent -e
 ```
+- **Pearl**: verifica `MINER="srbminer"` e `ALGO="pearlhash"` in `rig.conf` (NON `trex`/`PRL`).
 - Verifica che `MINER` in `rig.conf` corrisponda a un miner installato (`/opt/mineos/miners/<nome>/current`).
 - Verifica `POOL_URL`/`POOL_USER` in `pools.conf` (host/porta corretti dalla dashboard Kryptex).
+- Fix rapido: `sudo /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners`
 - Esegui un giro a vuoto: `sudo DRY_RUN=1 /opt/mineos/bin/mineos-agent.sh`.
+
+### First boot fallito (203/EXEC) o wizard non completato
+```bash
+journalctl -u mineos-firstboot -e
+sudo chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh
+sudo bash /opt/mineos/bin/first-boot-setup.sh --force
+# oppure, se il rig è già configurato:
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+```
 
 ### Hashrate a zero o worker offline su Kryptex
 - Controlla `POOL_USER` nel formato `username.worker`.

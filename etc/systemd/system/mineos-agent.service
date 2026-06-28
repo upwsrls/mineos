@@ -28,7 +28,7 @@ WorkingDirectory=/opt/mineos/state
 # Il prefisso '-' rende il passo non fatale se il flag non esiste.
 ExecStartPre=-/bin/rm -f /opt/mineos/state/reboot-required
 # Il miner gira in foreground; questo wrapper fa "exec" del binario scelto.
-ExecStart=/opt/mineos/bin/mineos-agent.sh
+ExecStart=/bin/bash /opt/mineos/bin/mineos-agent.sh
 # Riavvio robusto: se il miner crasha, riparte.
 Restart=always
 RestartSec=15
