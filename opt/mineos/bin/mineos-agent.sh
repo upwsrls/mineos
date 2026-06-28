@@ -68,6 +68,11 @@ load_all_conf() {
     ALGO="$(normalize_algo "$ALGO")"
     [[ "$algo_in" != "$ALGO" ]] && log WARN "Algoritmo '${algo_in}' normalizzato in '${ALGO}'."
 
+    # Pearl/pearlhash richiede SRBMiner: corregge rig.conf scritti con MINER=trex.
+    local miner_in="$MINER"
+    MINER="$(resolve_miner_for_algo "$MINER" "$ALGO")"
+    [[ "$miner_in" != "$MINER" ]] && log WARN "Miner '${miner_in}' incompatibile con '${ALGO}': uso '${MINER}'."
+
     log INFO "Config caricata: miner=$MINER algo=$ALGO pool=$POOL_URL user=$POOL_USER payout=${PAYOUT_MODE} (prelievi dalla dashboard Kryptex)"
 }
 
@@ -120,41 +125,15 @@ find_miner_binary() {
     local base="${MINEOS_MINERS}/${MINER}"
     local dir; dir="$(miner_dir)"
 
-    # 'current' è un symlink alla versione attiva. BUG STORICO: 'find <symlink>'
-    # in modalità -P (default) NON entra nella cartella puntata, quindi non
-    # trovava mai il binario -> die -> exit 1. Risolviamo prima il symlink.
-    if [[ -e "$dir" || -L "$dir" ]]; then
-        dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
-    fi
     # Fallback: se 'current' manca o è rotto, usa la versione più recente.
-    if [[ ! -d "$dir" ]]; then
+    if [[ ! -e "$dir" && ! -L "$dir" ]]; then
         dir="$(find -L "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
     fi
-    [[ -d "$dir" ]] || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners"
+    [[ -d "$dir" || -L "$dir" ]] \
+        || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners"
 
-    # Nomi binario noti per ciascun miner (i tar non sono uniformi su maiuscole).
-    local -a candidates=()
-    case "$MINER" in
-        trex)     candidates=(t-rex T-Rex) ;;
-        lolminer) candidates=(lolMiner lolminer) ;;
-        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
-    esac
-
-    local bin="" name
-    for name in "${candidates[@]}"; do
-        if [[ -f "${dir}/${name}" ]]; then
-            # Auto-fix permessi: se il binario c'è ma non è eseguibile, +x.
-            [[ -x "${dir}/${name}" ]] || chmod +x "${dir}/${name}" 2>/dev/null || true
-            [[ -x "${dir}/${name}" ]] && { bin="${dir}/${name}"; break; }
-        fi
-    done
-    # Fallback robusto: primo file regolare eseguibile nella cartella.
-    # '-print -quit' evita SIGPIPE/pipefail di 'find | head'.
-    if [[ -z "$bin" ]]; then
-        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
-    fi
-
-    [[ -n "$bin" && -x "$bin" ]] \
+    local bin
+    bin="$(find_miner_binary_in_dir "$MINER" "$dir")" \
         || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners"
     echo "$bin"
 }

@@ -111,7 +111,7 @@ apply_switch() {
     set_conf_value "${MINEOS_CONFIG}/rig.conf"   ALGO     "$best_algo"
     set_conf_value "${MINEOS_CONFIG}/rig.conf"   MINER    "$best_miner"
     set_conf_value "${MINEOS_CONFIG}/pools.conf" POOL_URL "$best_pool"
-    set_conf_value "${MINEOS_CONFIG}/wallet.conf" KRX_COIN "$best_algo"
+    set_conf_value "${MINEOS_CONFIG}/wallet.conf" KRX_COIN "$(coin_from_algo "$best_algo")"
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         log INFO "DRY_RUN: non riavvio il miner."

@@ -17,7 +17,7 @@ ConditionPathExists=/opt/mineos/state/first-boot.done
 
 [Service]
 Type=simple
-ExecStart=/opt/mineos/bin/watchdog.sh
+ExecStart=/bin/bash /opt/mineos/bin/watchdog.sh
 Restart=always
 RestartSec=30
 StandardOutput=journal

@@ -210,23 +210,10 @@ smoke_test_miner() {
     fi
     [[ -d "$dir" ]] || { log WARN "Cartella miner inesistente per $name: $dir"; return 1; }
 
-    # Selezione binario robusta: prima i nomi noti, poi fallback al primo
-    # eseguibile. '-print -quit' evita la fragilità di 'find | head' (SIGPIPE
-    # con pipefail) e si ferma al primo risultato.
-    local -a candidates=()
-    case "$name" in
-        trex)     candidates=(t-rex T-Rex) ;;
-        lolminer) candidates=(lolMiner lolminer) ;;
-        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
-    esac
-    local bin="" cand
-    for cand in "${candidates[@]}"; do
-        [[ -x "${dir}/${cand}" ]] && { bin="${dir}/${cand}"; break; }
-    done
-    if [[ -z "$bin" ]]; then
-        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
-    fi
-    [[ -n "$bin" ]] || { log WARN "Nessun binario eseguibile trovato in $dir per $name."; return 1; }
+    # Selezione binario robusta via libreria condivisa.
+    local bin
+    bin="$(find_miner_binary_in_dir "$name" "$dir")" \
+        || { log WARN "Nessun binario eseguibile trovato in $dir per $name."; return 1; }
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         log INFO "DRY_RUN: salto smoke-test di $name."
         return 0

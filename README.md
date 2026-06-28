@@ -16,6 +16,7 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Build dell'ISO](#build-delliso)
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
+- [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
 - [Notifiche Telegram](#notifiche-telegram)
@@ -100,6 +101,7 @@ mineos/
 │   │   ├── first-boot-setup.sh       # setup primo avvio (driver, wizard, miner)
 │   │   ├── update-mineos.sh          # updater con rollback
 │   │   ├── mineos-agent.sh           # avvia il miner
+│   │   ├── fix-rig-pearl.sh          # fix one-shot su rig già installati
 │   │   └── watchdog.sh               # monitoraggio 24/7
 │   ├── config/                       # rig.conf, wallet.conf, pools.conf (chmod 700)
 │   ├── miners/                       # binari miner versionati + symlink "current"
@@ -159,6 +161,7 @@ openssl passwd -6 'LaTuaPasswordSicura'
   (es. `prl:7048`, `rvn:7031`, `etc:7033`, `erg:7021`, `kas:7011`).
 - **Pearl (PRL)**: di default mineOS mina **Pearl** (`prl`, algoritmo `pearlhash`) con
   **SRBMiner-MULTI** (selezionato automaticamente per `pearlhash` su NVIDIA/AMD).
+  T-Rex **non** supporta `pearlhash`: non impostare `MINER="trex"` per Pearl.
 - **Payout MANUALE**: mineOS **non** automatizza payout né conversioni. Il saldo si accumula
   sul tuo account Kryptex e i prelievi si eseguono **a mano dalla dashboard** `kryptex.com`
   (`PAYOUT_MODE="manual"` in `wallet.conf`; riepilogo in `state/payout.txt`).
@@ -168,7 +171,6 @@ openssl passwd -6 'LaTuaPasswordSicura'
 Dalla root del progetto puoi usare il Makefile:
 
 ```bash
-make iso        # genera l'ISO (scarica l'ISO Ubuntu se assente)
 make rebuild    # rebuild pulito: clean + payload + iso (consigliato dopo modifiche)
 ```
 
@@ -178,13 +180,13 @@ Oppure direttamente lo script:
 cd mineos/build
 ./build-iso.sh
 # Scarica l'ISO ufficiale Ubuntu (se assente), inietta tutto e produce:
-#   mineos-24.04.2-autoinstall-amd64.iso
+#   mineos-24.04.3-autoinstall-amd64.iso
 ```
 
 Se hai già l'ISO ufficiale:
 
 ```bash
-./build-iso.sh /percorso/ubuntu-24.04.2-live-server-amd64.iso
+./build-iso.sh /percorso/ubuntu-24.04.3-live-server-amd64.iso
 ```
 
 ---
@@ -197,7 +199,7 @@ Se hai già l'ISO ufficiale:
 
 ```bash
 lsblk                      # individua il DISCO USB (es. /dev/sdb), non una partizione
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
 sync
 ```
 
@@ -206,7 +208,7 @@ sync
 ```bash
 diskutil list                          # individua /dev/diskN
 diskutil unmountDisk /dev/diskN
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
 ```
 
 In alternativa puoi usare strumenti grafici come **balenaEtcher**.
@@ -241,6 +243,55 @@ journalctl -u mineos-agent -f          # log live del miner
 ```
 
 Controlla poi che il **worker** compaia online nella dashboard Kryptex.
+
+---
+
+## Fix su rig già installato (Pearl)
+
+Se il rig ha già mineOS ma il mining non parte (errori storici: binario trex, estrazione
+vuota, algoritmo `PRL` invece di `pearlhash`, permessi, servizio 203/EXEC), usa lo
+script di fix one-shot **senza reinstallare l'ISO**:
+
+```bash
+# Con credenziali Kryptex (consigliato)
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh
+
+# Se i miner sono corrotti/mancanti, forza reinstall
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
+
+Lo script corregge automaticamente:
+
+| Problema | Fix applicato |
+|----------|---------------|
+| `203/EXEC` su first-boot/agent | `chmod +x` su tutti gli script; servizi via `/bin/bash` |
+| Cartella miner vuota (tar flat T-Rex) | Re-estrazione robusta + symlink `current` |
+| `MINER=trex` con Pearl | Imposta `MINER=srbminer` + `ALGO=pearlhash` |
+| Pool/wallet errati | `prl.kryptex.network:7048`, `krxXXXXXX.worker` |
+| Agent inattivo | Riavvio `mineos-agent` + `mineos-watchdog` |
+
+Verifica dopo il fix:
+
+```bash
+systemctl status mineos-agent
+journalctl -u mineos-agent -f
+ls -la /opt/mineos/miners/srbminer/current/
+```
+
+Se hai aggiornato i file mineOS sul repo locale e vuoi propagarli sul rig senza
+reinstallare l'ISO:
+
+```bash
+# Sul PC di build (Linux)
+make payload
+scp dist/mineos-payload.tar.gz miner@IP-RIG:/tmp/
+
+# Sul rig
+sudo tar -xzf /tmp/mineos-payload.tar.gz -C /
+sudo bash /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
 
 ---
 
@@ -524,9 +575,20 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 ```bash
 journalctl -u mineos-agent -e
 ```
+- **Pearl**: verifica `MINER="srbminer"` e `ALGO="pearlhash"` in `rig.conf` (NON `trex`/`PRL`).
 - Verifica che `MINER` in `rig.conf` corrisponda a un miner installato (`/opt/mineos/miners/<nome>/current`).
 - Verifica `POOL_URL`/`POOL_USER` in `pools.conf` (host/porta corretti dalla dashboard Kryptex).
+- Fix rapido: `sudo /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners`
 - Esegui un giro a vuoto: `sudo DRY_RUN=1 /opt/mineos/bin/mineos-agent.sh`.
+
+### First boot fallito (203/EXEC) o wizard non completato
+```bash
+journalctl -u mineos-firstboot -e
+sudo chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh
+sudo bash /opt/mineos/bin/first-boot-setup.sh --force
+# oppure, se il rig è già configurato:
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+```
 
 ### Hashrate a zero o worker offline su Kryptex
 - Controlla `POOL_USER` nel formato `username.worker`.

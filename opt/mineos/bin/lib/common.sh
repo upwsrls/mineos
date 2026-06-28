@@ -130,12 +130,55 @@ extract_miner_pkg() {
     fi
     rm -rf "$stage"
 
-    # Sicurezza: garantisci il bit +x su eventuali binari noti del miner.
+    # Sicurezza: garantisci il bit +x su eventuali binari noti del miner
+    # (cerca anche in sottocartelle: alcuni tar hanno layout annidato).
     local b
     for b in t-rex T-Rex lolMiner lolminer SRBMiner-MULTI SRBMiner-Multi srbminer; do
-        [[ -f "${dest}/${b}" ]] && chmod +x "${dest}/${b}" 2>/dev/null || true
+        while IFS= read -r -d '' f; do
+            chmod +x "$f" 2>/dev/null || true
+        done < <(find "$dest" -type f -name "$b" -print0 2>/dev/null)
     done
     return 0
+}
+
+# Trova il binario eseguibile di un miner installato.
+# Restituisce il path assoluto o exit 1. Usato da agent, update e fix-rig.
+find_miner_binary_in_dir() {
+    local miner="$1" dir="$2"
+    [[ -n "$miner" && -n "$dir" ]] || return 1
+
+    if [[ -e "$dir" || -L "$dir" ]]; then
+        dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
+    fi
+    [[ -d "$dir" ]] || return 1
+
+    local -a candidates=()
+    case "$miner" in
+        trex)     candidates=(t-rex T-Rex) ;;
+        lolminer) candidates=(lolMiner lolminer) ;;
+        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
+        *) return 1 ;;
+    esac
+
+    local bin="" name
+    for name in "${candidates[@]}"; do
+        if [[ -f "${dir}/${name}" ]]; then
+            [[ -x "${dir}/${name}" ]] || chmod +x "${dir}/${name}" 2>/dev/null || true
+            [[ -x "${dir}/${name}" ]] && { printf '%s' "${dir}/${name}"; return 0; }
+        fi
+    done
+    # Fallback: cerca per nome in tutta la cartella (max 3 livelli).
+    for name in "${candidates[@]}"; do
+        bin="$(find -L "$dir" -maxdepth 3 -type f -name "$name" -print -quit 2>/dev/null)"
+        if [[ -n "$bin" && -f "$bin" ]]; then
+            chmod +x "$bin" 2>/dev/null || true
+            [[ -x "$bin" ]] && { printf '%s' "$bin"; return 0; }
+        fi
+    done
+    # Ultimo tentativo: primo file eseguibile in root.
+    bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
+    [[ -n "$bin" && -x "$bin" ]] && { printf '%s' "$bin"; return 0; }
+    return 1
 }
 
 # Normalizza coin/ticker -> ALGORITMO del miner (i miner vogliono l'algoritmo,
@@ -165,12 +208,46 @@ normalize_algo() {
         flux|zel)
             printf 'zelhash' ;;
         "")
-            log WARN "Algoritmo/coin vuoto: uso 'kawpow' di default."
-            printf 'kawpow' ;;
+            log WARN "Algoritmo/coin vuoto: uso 'pearlhash' di default (Pearl/PRL)."
+            printf 'pearlhash' ;;
         *)
-            log WARN "Algoritmo/coin '$1' non riconosciuto: uso 'kawpow' di default."
-            printf 'kawpow' ;;
+            log WARN "Algoritmo/coin '$1' non riconosciuto: uso 'pearlhash' di default (Pearl/PRL)."
+            printf 'pearlhash' ;;
     esac
+}
+
+# Mappa algoritmo -> ticker coin Kryptex (inverso di normalize_algo).
+# Usato da profit-switch e fix-rig quando si aggiorna wallet.conf.
+coin_from_algo() {
+    local a; a="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "$a" in
+        pearlhash)    printf 'prl' ;;
+        kawpow)       printf 'rvn' ;;
+        etchash)      printf 'etc' ;;
+        autolykos2)   printf 'erg' ;;
+        kheavyhash)   printf 'kas' ;;
+        octopus)      printf 'cfx' ;;
+        firopow)      printf 'firo' ;;
+        zelhash)      printf 'flux' ;;
+        blake3)       printf 'alph' ;;
+        prl|pearl|rvn|ravencoin|etc|erg|kas|cfx|firo|flux|alph)
+            printf '%s' "$a" ;;
+        *)
+            log WARN "Algo '$1' senza ticker Kryptex noto: uso 'prl' (Pearl)."
+            printf 'prl' ;;
+    esac
+}
+
+# Corregge MINER in base all'algoritmo (es. pearlhash richiede srbminer, non trex).
+resolve_miner_for_algo() {
+    local miner="$1" algo="$2"
+    local pref; pref="$(miner_for_algo "$algo")"
+    if [[ -n "$pref" && "$miner" != "$pref" ]]; then
+        log WARN "Miner '${miner}' non supporta '${algo}': uso '${pref}'."
+        printf '%s' "$pref"
+    else
+        printf '%s' "$miner"
+    fi
 }
 
 # --- Catalogo miner (fonte unica) -------------------------------------------
@@ -208,8 +285,8 @@ kryptex_pool_url() {
         iron|ironfish)          hp="iron.kryptex.network:7017" ;;
         ltc|litecoin|doge)      hp="ltc.kryptex.network:7016" ;;
         *)
-            log WARN "Coin '$1' senza endpoint Kryptex noto: uso RVN (kawpow) come default."
-            hp="rvn.kryptex.network:7031" ;;
+            log WARN "Coin '$1' senza endpoint Kryptex noto: uso PRL (Pearl/pearlhash) come default."
+            hp="prl.kryptex.network:7048" ;;
     esac
     printf 'stratum+tcp://%s' "$hp"
 }

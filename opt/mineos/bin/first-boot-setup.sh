@@ -326,10 +326,11 @@ EOF
     if [[ -f "${MINEOS_CONFIG}/rig.conf" ]]; then
         log INFO "rig.conf già presente: lo mantengo."
     else
-        local default_miner
+        local default_miner="srbminer"   # Pearl/pearlhash e' il default mineOS
         case "$vendor" in
             amd) default_miner="srbminer" ;;
-            *)   default_miner="trex" ;;     # nvidia/both/none -> trex di default
+            nvidia) default_miner="srbminer" ;;  # Pearl su NVIDIA usa SRBMiner
+            *)   default_miner="srbminer" ;;
         esac
         # Alcuni algoritmi richiedono un miner specifico (es. pearlhash->srbminer):
         # in tal caso l'override prevale sul default per-vendor.
@@ -338,8 +339,8 @@ EOF
         cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
 # mineOS - configurazione rig
 GPU_VENDOR="${vendor}"
-MINER="${default_miner}"            # trex | lolminer | srbminer
-ALGO="${algo}"                      # algoritmo normalizzato (es. kawpow)
+MINER="${default_miner}"            # trex | lolminer | srbminer (Pearl -> srbminer)
+ALGO="${algo}"                      # algoritmo normalizzato (es. pearlhash)
 
 # Limiti termici/potenza (0 = non gestito da mineOS)
 GPU_POWER_LIMIT_W="0"               # es. 120 (NVIDIA: nvidia-smi -pl)

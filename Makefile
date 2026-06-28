@@ -7,7 +7,7 @@
 
 # --- Variabili configurabili (override: `make iso UBUNTU_VERSION=24.04.3`) ---
 PROJECT_NAME     := mineos
-UBUNTU_VERSION   ?= 24.04.2
+UBUNTU_VERSION   ?= 24.04.3
 UBUNTU_ISO_NAME  ?= ubuntu-$(UBUNTU_VERSION)-live-server-amd64.iso
 
 # --- Percorsi -------------------------------------------------------------
