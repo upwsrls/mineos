@@ -224,6 +224,8 @@ main() {
     log INFO "=== fix-rig-pearl: correzione Pearl/Kryptex ==="
     fix_permissions
     fix_nvidia_boot
+    log INFO "Verifica rilevamento multi-GPU..."
+    verify_nvidia_gpu_visibility 2>/dev/null || gpu_detection_report
     reinstall_miners
     fix_config
     ensure_first_boot_done

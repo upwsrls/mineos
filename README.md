@@ -611,10 +611,31 @@ Dopo il reboot gli errori `i2c timeout` / `ucsi_ccg` non dovrebbero più compari
 - Verifica Secure Boot disattivato.
 - Controlla i log: `journalctl -b | grep -i nvidia`.
 
+### GPU mancanti in nvidia-smi (es. RTX 3090 / GTX 1080 non rilevate, solo 1660)
+
+- **Causa tipica**: BAR/memoria PCIe insufficiente su rig multi-GPU eterogenei, riser non visti al boot, **Above 4G Decoding** disabilitato in BIOS.
+- **Diagnostica mineOS**:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh
+cat /opt/mineos/state/gpu-inventory.txt
+nvidia-smi -L
+lspci | grep -iE 'VGA|3D controller'
+```
+
+- Confronta `sysfs_pci` (hardware) vs `nvidia-smi` (driver). Se hardware > driver:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh --rescan-only
+sudo reboot
+```
+
+- **BIOS**: abilita **Above 4G Decoding** / **Large BAR** / **Re-Size BAR Support**.
+- mineOS aggiunge automaticamente `pci=realloc` in GRUB al first boot (multi-GPU).
+
 ### Il first boot diceva "Nessuna GPU rilevata" anche con `nvidia-smi` funzionante
-- **Risolto**: la rilevazione GPU ora è multi-metodo e non dipende solo da `lspci`. In cascata prova: `lspci` → `nvidia-smi`/`rocm-smi` → vendor ID in `/sys/class/drm/card*/device/vendor` (`0x10de` NVIDIA, `0x1002` AMD).
-- Inoltre il first boot **non si interrompe più** per avvisi minori: completa il setup, crea i file di config mancanti e avvia il mining automaticamente.
-- Verifica manuale della rilevazione: `source /opt/mineos/bin/lib/common.sh && detect_gpu_vendor`.
+- **Risolto**: rilevazione multi-metodo `sysfs_pci` → `lspci` (solo VGA/3D) → `sysfs_drm` → `nvidia-smi`.
+- Verifica manuale: `source /opt/mineos/bin/lib/common.sh && gpu_detection_report`
 
 ### Il miner non parte
 ```bash

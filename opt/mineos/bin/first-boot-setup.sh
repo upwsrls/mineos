@@ -90,6 +90,7 @@ ensure_base_tools() {
 install_nvidia_driver() {
     if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
         log INFO "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+        verify_nvidia_gpu_visibility
         return 0
     fi
     local pm; pm="$(detect_pkg_mgr)"
@@ -127,6 +128,7 @@ install_nvidia_driver() {
     esac
     log INFO "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel."
     apply_nvidia_boot_fix
+    apply_multigpu_grub_fix
     mark_reboot_required
 }
 
@@ -435,10 +437,19 @@ main() {
     check_already_done
     ensure_base_tools
 
+    log INFO "=== Inventario GPU hardware (sysfs_pci + lspci + drm + nvidia-smi) ==="
+    gpu_detection_report
+
     local vendor; vendor="$(detect_gpu_vendor)"
-    log INFO "GPU vendor rilevato: ${vendor}"
+    log INFO "GPU vendor rilevato: ${vendor} (count nvidia=$(detect_gpu_count nvidia) amd=$(detect_gpu_count amd))"
 
     install_drivers "$vendor"
+
+    # Se il driver NVIDIA e' gia' attivo (no reboot), verifica subito che tutte le GPU siano visibili.
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+        verify_nvidia_gpu_visibility
+    fi
+
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
