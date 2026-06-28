@@ -318,6 +318,49 @@ kryptex_pool_user() {
     fi
 }
 
+# --- Fix boot NVIDIA i2c timeout / ucsi_ccg (rig mining) --------------------
+# Su GPU NVIDIA senza USB-C funzionante il kernel tenta i2c_nvidia_gpu + ucsi_ccg
+# e stampa "i2c timeout error" / "ucsi_ccg_init failed -110" (non blocca mining).
+# Scrive /etc/modprobe.d/mineos-nvidia-*.conf e rigenera initramfs.
+apply_nvidia_boot_fix() {
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log INFO "DRY_RUN: salto apply_nvidia_boot_fix."
+        return 0
+    fi
+
+    local i2c_conf="/etc/modprobe.d/mineos-nvidia-i2c.conf"
+    local nv_conf="/etc/modprobe.d/mineos-nvidia.conf"
+    mkdir -p /etc/modprobe.d
+
+    # Idempotente: scrivi solo se mancante o diverso dal contenuto atteso.
+    if [[ ! -f "$i2c_conf" ]] || ! grep -q 'blacklist i2c_nvidia_gpu' "$i2c_conf" 2>/dev/null; then
+        cat > "$i2c_conf" <<'EOF'
+# mineOS - fix boot "nvidia-gpu i2c timeout" / "ucsi_ccg init failed -110"
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+        log INFO "Scritto ${i2c_conf} (blacklist i2c_nvidia_gpu/ucsi_ccg)."
+    fi
+
+    if [[ ! -f "$nv_conf" ]] || ! grep -q 'NVreg_EnableUsbPd=0' "$nv_conf" 2>/dev/null; then
+        cat > "$nv_conf" <<'EOF'
+# mineOS - opzioni driver NVIDIA per rig mining headless
+options nvidia NVreg_EnableUsbPd=0
+EOF
+        log INFO "Scritto ${nv_conf} (NVreg_EnableUsbPd=0)."
+    fi
+
+    if command -v update-initramfs >/dev/null 2>&1; then
+        log INFO "Rigenero initramfs (modprobe NVIDIA)..."
+        run update-initramfs -u \
+            || log WARN "update-initramfs fallito: esegui manualmente 'sudo update-initramfs -u' e reboot."
+    else
+        log WARN "update-initramfs assente: reboot dopo install driver per applicare il fix."
+    fi
+}
+
 # --- Helper config -----------------------------------------------------------
 # Carica un file di config "KEY=VALUE" in modo sicuro (deve esistere).
 load_conf() {

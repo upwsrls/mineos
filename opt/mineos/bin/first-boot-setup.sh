@@ -126,6 +126,7 @@ install_nvidia_driver() {
         *) die "Installazione driver NVIDIA non supportata su questo package manager." ;;
     esac
     log INFO "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel."
+    apply_nvidia_boot_fix
     mark_reboot_required
 }
 

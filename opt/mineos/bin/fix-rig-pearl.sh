@@ -10,6 +10,7 @@
 #   - algoritmo errato (PRL/RVN invece di pearlhash)
 #   - miner sbagliato (trex con pearlhash -> srbminer)
 #   - pool Kryptex Pearl (prl.kryptex.network:7048)
+#   - errori boot NVIDIA i2c timeout / ucsi_ccg
 #   - riavvio servizi systemd
 #
 # Uso:
@@ -35,6 +36,19 @@ for arg in "$@"; do
         *) die "Argomento sconosciuto: $arg (usa --help)" ;;
     esac
 done
+
+fix_nvidia_boot() {
+    local vendor; vendor="$(detect_gpu_vendor)"
+    case "$vendor" in
+        nvidia|both)
+            log INFO "Applico fix boot NVIDIA (i2c timeout / ucsi_ccg)..."
+            apply_nvidia_boot_fix
+            ;;
+        *)
+            log INFO "Nessuna GPU NVIDIA: salto fix i2c/ucsi."
+            ;;
+    esac
+}
 
 fix_permissions() {
     log INFO "Correggo permessi script e cartelle..."
@@ -207,6 +221,7 @@ main() {
     require_root
     log INFO "=== fix-rig-pearl: correzione Pearl/Kryptex ==="
     fix_permissions
+    fix_nvidia_boot
     reinstall_miners
     fix_config
     ensure_first_boot_done

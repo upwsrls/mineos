@@ -46,6 +46,26 @@ else
     echo "[mineos-install] Utente '${MINER_USER}' non presente: lo gestisce l'autoinstall."
 fi
 
+echo "[mineos-install] Fix boot NVIDIA i2c/ucsi (modprobe)..."
+if [[ -f /etc/modprobe.d/mineos-nvidia-i2c.conf ]]; then
+    echo "[mineos-install] modprobe.d mineOS presente nel payload."
+else
+    cat > /etc/modprobe.d/mineos-nvidia-i2c.conf <<'EOF'
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+    cat > /etc/modprobe.d/mineos-nvidia.conf <<'EOF'
+options nvidia NVreg_EnableUsbPd=0
+EOF
+fi
+if command -v update-initramfs >/dev/null 2>&1; then
+    update-initramfs -u \
+        && echo "[mineos-install] initramfs aggiornato (fix i2c NVIDIA)." \
+        || echo "[mineos-install] AVVISO: update-initramfs fallito (proseguo)."
+fi
+
 echo "[mineos-install] Reload systemd e abilitazione servizi..."
 systemctl daemon-reload
 

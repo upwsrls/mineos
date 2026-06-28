@@ -160,6 +160,7 @@ update_nvidia_driver() {
         *) log WARN "Update driver NVIDIA non supportato su $pm." ;;
     esac
     # Il modulo nuovo si carica solo dopo reboot.
+    apply_nvidia_boot_fix
     mark_reboot_required
 }
 

@@ -561,6 +561,36 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 ### L'installer si ferma o chiede conferme
 - Significa che il seed autoinstall non è stato letto. Verifica di aver buildato con `build-iso.sh` (che aggiunge `autoinstall ds=nocloud;s=/cdrom/server/` a GRUB) e non di aver flashato l'ISO Ubuntu vergine.
 
+### `nvidia-gpu i2c timeout` / `ucsi_ccg init failed -110` al boot
+- **Causa**: GPU NVIDIA da mining con funzione USB-C (.3) senza controller I2C reale. Il kernel prova `i2c_nvidia_gpu` + `ucsi_ccg` e fallisce con timeout. **Non blocca** CUDA/mining, ma sporca `tty1`.
+- **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot.
+- **Fix manuale su rig già installato**:
+
+```bash
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+# oppure solo il fix NVIDIA:
+sudo bash -c 'source /opt/mineos/bin/lib/common.sh && apply_nvidia_boot_fix'
+sudo reboot
+```
+
+- **Fix manuale diretto** (recovery/single-user):
+
+```bash
+sudo tee /etc/modprobe.d/mineos-nvidia-i2c.conf <<'EOF'
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+sudo tee /etc/modprobe.d/mineos-nvidia.conf <<'EOF'
+options nvidia NVreg_EnableUsbPd=0
+EOF
+sudo update-initramfs -u
+sudo reboot
+```
+
+Dopo il reboot gli errori `i2c timeout` / `ucsi_ccg` non dovrebbero più comparire. Verifica che `nvidia-smi` funzioni normalmente.
+
 ### `nvidia-smi` non funziona / nessuna GPU
 - Spesso serve un **reboot** dopo l'installazione driver (mineOS lo segnala con il flag `reboot-required`).
 - Verifica Secure Boot disattivato.
