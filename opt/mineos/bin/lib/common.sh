@@ -41,12 +41,40 @@ run() {
 
 # --- Helper di rilevamento ---------------------------------------------------
 # Restituisce: nvidia | amd | both | none
+# Rilevazione robusta in cascata: lspci -> tool vendor (nvidia-smi/rocm-smi)
+# -> sysfs DRM vendor IDs. Cosi' funziona anche se pciutils non e' installato
+# o se lspci non riconosce la scheda (VM, naming non standard).
 detect_gpu_vendor() {
     local has_nvidia=0 has_amd=0
-    if lspci -nn 2>/dev/null | grep -Eiq 'VGA|3D|Display' ; then
-        lspci -nn | grep -Eiq 'NVIDIA'                         && has_nvidia=1
-        lspci -nn | grep -Eiq 'Advanced Micro Devices|AMD/ATI' && has_amd=1
+
+    # 1) lspci, se disponibile.
+    if command -v lspci >/dev/null 2>&1; then
+        lspci -nn 2>/dev/null | grep -Eiq 'NVIDIA'                              && has_nvidia=1
+        lspci -nn 2>/dev/null | grep -Eiq 'Advanced Micro Devices|AMD/ATI|\[AMD' && has_amd=1
     fi
+
+    # 2) Fallback: tool vendor-specifici (autorevoli se rispondono).
+    if [[ $has_nvidia -eq 0 ]] && command -v nvidia-smi >/dev/null 2>&1 \
+            && nvidia-smi -L >/dev/null 2>&1; then
+        has_nvidia=1
+    fi
+    if [[ $has_amd -eq 0 ]] && command -v rocm-smi >/dev/null 2>&1 \
+            && rocm-smi --showid >/dev/null 2>&1; then
+        has_amd=1
+    fi
+
+    # 3) Fallback: sysfs DRM (0x10de=NVIDIA, 0x1002=AMD).
+    if [[ $has_nvidia -eq 0 || $has_amd -eq 0 ]]; then
+        local vfile
+        for vfile in /sys/class/drm/card*/device/vendor; do
+            [[ -r "$vfile" ]] || continue
+            case "$(cat "$vfile" 2>/dev/null)" in
+                0x10de) has_nvidia=1 ;;
+                0x1002) has_amd=1 ;;
+            esac
+        done
+    fi
+
     if   [[ $has_nvidia -eq 1 && $has_amd -eq 1 ]]; then echo "both"
     elif [[ $has_nvidia -eq 1 ]]; then echo "nvidia"
     elif [[ $has_amd    -eq 1 ]]; then echo "amd"

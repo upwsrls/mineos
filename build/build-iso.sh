@@ -21,7 +21,7 @@
 set -Eeuo pipefail
 
 # --- Parametri --------------------------------------------------------------
-UBUNTU_VERSION="24.04.2"
+UBUNTU_VERSION="24.04.3"
 UBUNTU_ISO_NAME="ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
 UBUNTU_ISO_URL="https://releases.ubuntu.com/24.04/${UBUNTU_ISO_NAME}"
 

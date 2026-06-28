@@ -138,9 +138,11 @@ mineos/
 sudo apt-get update && sudo apt-get install -y xorriso wget
 ```
 
-### 2. Imposta la password dell'utente
+### 2. (Opzionale) Cambia la password di default
 
-Genera un hash SHA-512 e incollalo in `build/autoinstall/user-data` (campo `identity.password`):
+L'immagine ha credenziali di **default**: utente `miner` / password `miner`.
+
+> ⚠️ **Cambia la password dopo il primo accesso** (`passwd`), oppure personalizzala già in fase di build generando un nuovo hash SHA-512 e sostituendo il campo `identity.password` in `build/autoinstall/user-data`:
 
 ```bash
 openssl passwd -6 'LaTuaPasswordSicura'
@@ -156,6 +158,15 @@ openssl passwd -6 'LaTuaPasswordSicura'
   per il tuo coin dalla dashboard Kryptex.
 
 ### 4. Genera l'ISO
+
+Dalla root del progetto puoi usare il Makefile:
+
+```bash
+make iso        # genera l'ISO (scarica l'ISO Ubuntu se assente)
+make rebuild    # rebuild pulito: clean + payload + iso (consigliato dopo modifiche)
+```
+
+Oppure direttamente lo script:
 
 ```bash
 cd mineos/build
@@ -206,6 +217,8 @@ In alternativa puoi usare strumenti grafici come **balenaEtcher**.
    - **Coin/algoritmo** (es. `kawpow`, `etchash`, `autolykos2`).
 4. mineOS rileva la GPU, installa i driver, scarica i miner e genera la configurazione.
 5. Se sono stati installati i driver NVIDIA, viene richiesto un **reboot**; dopo il riavvio il mining parte da solo.
+
+> 🔑 **Login di default**: utente `miner` / password `miner` (via console o SSH). **Cambiala subito** con `passwd`.
 
 > 💡 **Serve un monitor collegato** al primo avvio, perché il wizard è interattivo su `tty1`.
 > Per deployment headless/fleet puoi pre-compilare le credenziali in `user-data` o usare
@@ -493,6 +506,11 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 - Verifica Secure Boot disattivato.
 - Controlla i log: `journalctl -b | grep -i nvidia`.
 
+### Il first boot diceva "Nessuna GPU rilevata" anche con `nvidia-smi` funzionante
+- **Risolto**: la rilevazione GPU ora è multi-metodo e non dipende solo da `lspci`. In cascata prova: `lspci` → `nvidia-smi`/`rocm-smi` → vendor ID in `/sys/class/drm/card*/device/vendor` (`0x10de` NVIDIA, `0x1002` AMD).
+- Inoltre il first boot **non si interrompe più** per avvisi minori: completa il setup, crea i file di config mancanti e avvia il mining automaticamente.
+- Verifica manuale della rilevazione: `source /opt/mineos/bin/lib/common.sh && detect_gpu_vendor`.
+
 ### Il miner non parte
 ```bash
 journalctl -u mineos-agent -e
@@ -535,7 +553,7 @@ cat /opt/mineos/state/reboot-reasons.log
 - Pulisci periodicamente la polvere: i dissipatori intasati sono la causa #1 di throttling e usura.
 
 ### Sicurezza del sistema
-- Cambia **subito** la password di default dell'utente `miner` e usa una password robusta.
+- Le credenziali di default sono **`miner` / `miner`**: cambia **subito** la password al primo accesso (`passwd`) e usa una password robusta.
 - I file in `/opt/mineos/config/` contengono le tue credenziali Kryptex: sono `chmod 700/600`. **Non condividerli** e non committarli in repository pubblici.
 - Esponi il rig il meno possibile: SSH solo su rete fidata, valuta chiavi SSH al posto della password.
 

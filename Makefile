@@ -36,7 +36,7 @@ BOLD  := \033[1m
 RESET := \033[0m
 
 .DEFAULT_GOAL := help
-.PHONY: help payload iso clean clean-all install-local update-check check-tools
+.PHONY: help payload iso rebuild clean clean-all install-local update-check check-tools
 
 # ---------------------------------------------------------------------------
 help: ## Mostra questo aiuto
@@ -69,6 +69,13 @@ iso: ## Builda l'ISO completa (scarica l'ISO Ubuntu se assente)
 	fi
 	cd $(BUILD_DIR) && ./build-iso.sh
 	@printf "ISO generata: $(CYAN)$(OUT_ISO)$(RESET)\n"
+
+# ---------------------------------------------------------------------------
+rebuild: ## Ricostruisce l'ISO da zero (clean temporanei + payload + iso)
+	@printf "$(BOLD)Rebuild completo dell'ISO...$(RESET)\n"
+	$(MAKE) clean
+	$(MAKE) payload
+	$(MAKE) iso
 
 # ---------------------------------------------------------------------------
 clean: ## Pulisce file temporanei (work/, dist/, payload)

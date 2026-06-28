@@ -23,8 +23,21 @@ opt/mineos/backups/
 # --- Log generici ----------------------------------------------------------
 *.log
 
-# --- Sistema operativo / editor --------------------------------------------
+# --- macOS (metadati creati dal Finder/Spotlight) --------------------------
 .DS_Store
+.DS_Store?
+# AppleDouble e file di risorse macOS
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.AppleDouble
+.LSOverride
+.DocumentRevisions-V100
+.TemporaryItems
+*.icloud
+
+# --- Windows / editor ------------------------------------------------------
 Thumbs.db
 *.swp
 *~

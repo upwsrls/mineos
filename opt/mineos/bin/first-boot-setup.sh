@@ -15,7 +15,11 @@
 # Idempotente: se rilanciato dopo il completamento, esce senza fare nulla
 # (a meno di --force).
 #
-set -Eeuo pipefail
+# NB: volutamente SENZA 'set -e': il first boot deve COMPLETARSI anche se un
+# singolo passo non critico fallisce (avvisi minori). Gli errori fatali sono
+# gestiti esplicitamente con 'die'. Manteniamo -u (variabili non definite) e
+# pipefail per non mascherare bug.
+set -uo pipefail
 
 # --- Carica la libreria comune ----------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +38,8 @@ done
 
 DONE_FLAG="${MINEOS_STATE}/first-boot.done"
 
-trap 'log ERROR "first-boot-setup fallito alla riga $LINENO (comando: $BASH_COMMAND)"' ERR
+# Non abortiamo sugli errori: li segnaliamo come avviso e proseguiamo.
+trap 'log WARN "Passo non riuscito (riga $LINENO): $BASH_COMMAND — proseguo."' ERR
 
 # ============================================================================
 # STEP 0 - Prerequisiti e struttura cartelle
@@ -122,8 +127,14 @@ install_drivers() {
         nvidia) install_nvidia_driver ;;
         amd)    install_amd_driver ;;
         both)   install_nvidia_driver; install_amd_driver ;;
-        none)   die "Nessuna GPU rilevata via lspci. mineOS richiede almeno una GPU." ;;
-        *)      die "Vendor GPU non riconosciuto: $vendor" ;;
+        none)
+            # Nessuna GPU rilevata da NESSUN metodo (lspci/nvidia-smi/rocm-smi/sysfs).
+            # Non è fatale: completiamo il setup e lasciamo che l'utente intervenga.
+            log WARN "Nessuna GPU rilevata. Salto l'installazione driver; verifica l'hardware/driver."
+            ;;
+        *)
+            log WARN "Vendor GPU non riconosciuto ('$vendor'). Salto l'installazione driver."
+            ;;
     esac
 }
 
@@ -159,7 +170,10 @@ run_wizard() {
     : "${KRX_USERNAME:=}"; : "${KRX_WORKER:=}"; : "${KRX_COIN:=}"; : "${RIG_NAME:=}"
 
     prompt_value KRX_USERNAME "Username/Wallet Kryptex:"
-    [[ -n "$KRX_USERNAME" ]] || die "Username Kryptex obbligatorio."
+    if [[ -z "$KRX_USERNAME" ]]; then
+        KRX_USERNAME="CHANGE_ME"
+        log WARN "Username Kryptex non fornito: imposto '$KRX_USERNAME'. Modificalo in wallet.conf prima di minare."
+    fi
 
     prompt_value RIG_NAME    "Nome del rig:" "$(hostname -s)"
     prompt_value KRX_WORKER  "Nome worker:" "$RIG_NAME"
@@ -224,36 +238,52 @@ install_miners() {
 # ============================================================================
 write_configs() {
     local vendor="$1"
-
-    # --- wallet.conf: credenziali Kryptex (permessi restrittivi) -------------
     umask 077
-    cat > "${MINEOS_CONFIG}/wallet.conf" <<EOF
+
+    # Valori di default per i campi non raccolti dal wizard (modalità robusta).
+    : "${KRX_USERNAME:=CHANGE_ME}"
+    : "${KRX_WORKER:=$(hostname -s 2>/dev/null || echo rig)}"
+    : "${KRX_COIN:=kawpow}"
+
+    # --- wallet.conf: credenziali Kryptex (solo se mancante) -----------------
+    if [[ -f "${MINEOS_CONFIG}/wallet.conf" ]]; then
+        log INFO "wallet.conf già presente: lo mantengo."
+    else
+        cat > "${MINEOS_CONFIG}/wallet.conf" <<EOF
 # mineOS - credenziali Kryptex (NON committare, NON condividere)
 KRX_USERNAME="${KRX_USERNAME}"
 KRX_WORKER="${KRX_WORKER}"
 KRX_COIN="${KRX_COIN}"
 EOF
-    chmod 600 "${MINEOS_CONFIG}/wallet.conf"
+        chmod 600 "${MINEOS_CONFIG}/wallet.conf"
+        log INFO "wallet.conf creato."
+    fi
 
-    # --- pools.conf: endpoint stratum Kryptex --------------------------------
-    # IMPORTANTE: URL/porta esatti vanno presi dalla dashboard Kryptex per il
-    # coin scelto. Quelli sotto sono PLACEHOLDER da sostituire.
-    cat > "${MINEOS_CONFIG}/pools.conf" <<EOF
+    # --- pools.conf: endpoint stratum Kryptex (solo se mancante) -------------
+    if [[ -f "${MINEOS_CONFIG}/pools.conf" ]]; then
+        log INFO "pools.conf già presente: lo mantengo."
+    else
+        cat > "${MINEOS_CONFIG}/pools.conf" <<EOF
 # mineOS - pool Kryptex per coin=${KRX_COIN}
 # Sostituisci host/porta con i valori reali della tua dashboard Kryptex.
 POOL_URL="stratum+tcp://${KRX_COIN}.kryptex.network:7777"
 POOL_USER="${KRX_USERNAME}.${KRX_WORKER}"
 POOL_PASS="x"
 EOF
-    chmod 600 "${MINEOS_CONFIG}/pools.conf"
+        chmod 600 "${MINEOS_CONFIG}/pools.conf"
+        log INFO "pools.conf creato."
+    fi
 
-    # --- rig.conf: hardware, miner scelto, OC/limiti -------------------------
-    local default_miner
-    case "$vendor" in
-        amd) default_miner="srbminer" ;;
-        *)   default_miner="trex" ;;     # nvidia o both -> trex di default
-    esac
-    cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
+    # --- rig.conf: hardware, miner scelto, OC/limiti (solo se mancante) ------
+    if [[ -f "${MINEOS_CONFIG}/rig.conf" ]]; then
+        log INFO "rig.conf già presente: lo mantengo."
+    else
+        local default_miner
+        case "$vendor" in
+            amd) default_miner="srbminer" ;;
+            *)   default_miner="trex" ;;     # nvidia/both/none -> trex di default
+        esac
+        cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
 # mineOS - configurazione rig
 GPU_VENDOR="${vendor}"
 MINER="${default_miner}"            # trex | lolminer | srbminer
@@ -272,9 +302,11 @@ WATCHDOG_ZERO_GRACE_SEC="300"       # restart se sotto soglia per N secondi
 # Profit-switch automatico (richiede profit-switch.conf). true | false
 PROFIT_SWITCH="false"
 EOF
-    chmod 600 "${MINEOS_CONFIG}/rig.conf"
+        chmod 600 "${MINEOS_CONFIG}/rig.conf"
+        log INFO "rig.conf creato (miner=${default_miner})."
+    fi
 
-    log INFO "File di config generati in ${MINEOS_CONFIG}."
+    log INFO "Configurazione pronta in ${MINEOS_CONFIG}."
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
 }
 
@@ -285,11 +317,25 @@ enable_services() {
     sysctl_safe enable mineos-agent.service mineos-watchdog.service
     # Timer profit-switch sempre abilitato: lo script si auto-gate su rig.conf.
     sysctl_safe enable mineos-profit-switch.timer
+
     if [[ -f "${MINEOS_STATE}/reboot-required" ]]; then
         log INFO "Reboot richiesto (driver appena installati): i servizi partiranno dopo il riavvio."
-    else
-        sysctl_safe start mineos-agent.service mineos-watchdog.service
-        sysctl_safe start mineos-profit-switch.timer
+        return 0
+    fi
+
+    # Avvio automatico del mining dopo il setup.
+    sysctl_safe start mineos-agent.service mineos-watchdog.service
+    sysctl_safe start mineos-profit-switch.timer
+
+    # Verifica che l'agent sia effettivamente attivo; se non lo è, riprova una volta.
+    if command -v systemctl >/dev/null 2>&1; then
+        sleep 2
+        if systemctl is-active --quiet mineos-agent.service; then
+            log INFO "Mining avviato automaticamente (mineos-agent attivo)."
+        else
+            log WARN "mineos-agent non attivo: riprovo un avvio."
+            sysctl_safe restart mineos-agent.service
+        fi
     fi
 }
 
