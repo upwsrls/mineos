@@ -137,7 +137,7 @@ update_os() {
         newest="$(ls -1 /lib/modules 2>/dev/null | sort -V | tail -1)"
         if [[ -n "$newest" && "$newest" != "$running" ]]; then
             log WARN "Kernel aggiornato ($running -> $newest): reboot consigliato."
-            touch "${MINEOS_STATE}/reboot-required"
+            mark_reboot_required
         fi
     fi
 }
@@ -160,7 +160,7 @@ update_nvidia_driver() {
         *) log WARN "Update driver NVIDIA non supportato su $pm." ;;
     esac
     # Il modulo nuovo si carica solo dopo reboot.
-    touch "${MINEOS_STATE}/reboot-required"
+    mark_reboot_required
 }
 
 update_amd_driver() {
@@ -189,15 +189,8 @@ update_drivers() {
 # ----------------------------------------------------------------------------
 # STEP 4 - Aggiornamento miner (con rollback)
 # ----------------------------------------------------------------------------
-# Catalogo: NOME|VERSIONE|URL|SHA256|VENDOR
-# Tieni allineati versioni/URL/checksum alle release ufficiali (GitHub).
-miner_catalog() {
-    cat <<'EOF'
-trex|0.26.8|https://github.com/trexminer/T-Rex/releases/download/0.26.8/t-rex-0.26.8-linux.tar.gz|REPLACE_WITH_REAL_SHA256|nvidia
-lolminer|1.88|https://github.com/Lolliedieb/lolMiner-releases/releases/download/1.88/lolMiner_v1.88_Lin64.tar.gz|REPLACE_WITH_REAL_SHA256|both
-srbminer|2.6.8|https://github.com/doktor83/SRBMiner-Multi/releases/download/2.6.8/SRBMiner-Multi-2-6-8-Linux.tar.gz|REPLACE_WITH_REAL_SHA256|amd
-EOF
-}
+# Il catalogo miner (NOME|VERSIONE|URL|SHA256|VENDOR) è centralizzato in
+# common.sh (miner_catalog), fonte unica per first-boot e update.
 
 # Restituisce la versione attualmente puntata da "current" (o vuoto).
 current_miner_version() {
@@ -208,9 +201,31 @@ current_miner_version() {
 # Smoke-test: il binario deve almeno rispondere a --help/--version senza crashare.
 smoke_test_miner() {
     local name="$1" dir="$2"
-    local bin
-    # Heuristica: cerca un eseguibile noto nel pacchetto.
-    bin="$(find "$dir" -maxdepth 1 -type f -perm -u+x 2>/dev/null | head -1)"
+
+    # Stesso fix di find_miner_binary: accetta sia la cartella-versione sia il
+    # symlink 'current'. In modalità -P (default) 'find <symlink> -type f' NON
+    # entra nella cartella puntata -> nessun binario trovato. Risolvi prima.
+    if [[ -L "$dir" ]]; then
+        dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
+    fi
+    [[ -d "$dir" ]] || { log WARN "Cartella miner inesistente per $name: $dir"; return 1; }
+
+    # Selezione binario robusta: prima i nomi noti, poi fallback al primo
+    # eseguibile. '-print -quit' evita la fragilità di 'find | head' (SIGPIPE
+    # con pipefail) e si ferma al primo risultato.
+    local -a candidates=()
+    case "$name" in
+        trex)     candidates=(t-rex T-Rex) ;;
+        lolminer) candidates=(lolMiner lolminer) ;;
+        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
+    esac
+    local bin="" cand
+    for cand in "${candidates[@]}"; do
+        [[ -x "${dir}/${cand}" ]] && { bin="${dir}/${cand}"; break; }
+    done
+    if [[ -z "$bin" ]]; then
+        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
+    fi
     [[ -n "$bin" ]] || { log WARN "Nessun binario eseguibile trovato in $dir per $name."; return 1; }
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         log INFO "DRY_RUN: salto smoke-test di $name."
@@ -232,8 +247,12 @@ update_one_miner() {
     local link="${base}/current"
     local prev; prev="$(current_miner_version "$name")"
 
-    if [[ "$prev" == "$ver" && -d "$dest" ]]; then
-        log INFO "Miner $name già alla versione $ver. Niente da fare."
+    # "Già aggiornato" solo se la versione coincide E il binario esiste davvero
+    # (una vecchia estrazione rotta lasciava la cartella vuota: in quel caso
+    # NON saltare, va riscaricato).
+    if [[ "$prev" == "$ver" && -d "$dest" \
+          && -n "$(find -L "$dest" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)" ]]; then
+        log INFO "Miner $name già alla versione $ver (binario presente). Niente da fare."
         return 0
     fi
 
@@ -256,7 +275,14 @@ update_one_miner() {
     else
         log WARN "Checksum non verificato per $name (placeholder o DRY_RUN)."
     fi
-    run tar -xzf "${tmp}/pkg.tar.gz" -C "$dest" --strip-components=1
+    # Estrazione robusta (indipendente dal layout dell'archivio).
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log INFO "DRY_RUN: salto estrazione di $name $ver."
+    elif ! extract_miner_pkg "${tmp}/pkg.tar.gz" "$dest"; then
+        log ERROR "Estrazione fallita per $name $ver. Mantengo la versione attuale."
+        rm -rf "$tmp" "$dest"
+        return 1
+    fi
     rm -rf "$tmp"
 
     # Swap atomico del symlink "current" verso la nuova versione.

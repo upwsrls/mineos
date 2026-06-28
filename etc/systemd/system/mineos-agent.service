@@ -8,22 +8,30 @@
 [Unit]
 Description=mineOS mining agent (miner nativo -> pool Kryptex)
 Wants=network-online.target
+# Ordine, non condizione: partiamo DOPO il first boot (che genera la config),
+# ma senza ConditionPathExists che lascerebbe l'agent 'inactive (condition)'
+# se il first boot non avesse (ancora) creato i flag. La verifica della config
+# la fa lo script (mineos-agent.sh), con un errore chiaro se manca.
 After=network-online.target mineos-firstboot.service
-# Non avviare prima che il first boot sia completato.
-ConditionPathExists=/opt/mineos/state/first-boot.done
-# Non avviare se serve un reboot (driver/kernel appena aggiornati).
-ConditionPathExists=!/opt/mineos/state/reboot-required
+# NESSUNA condizione bloccante: né su first-boot.done né su reboot-required.
+# Evita loop di restart troppo aggressivi (direttive di sezione [Unit]).
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
+# cwd scrivibile: con ProtectSystem=strict la '/' è read-only e alcuni miner
+# scrivono file di log/temp nella cartella corrente (uscirebbero con errore).
+WorkingDirectory=/opt/mineos/state
+# Al primo avvio dopo un reboot pianificato (driver/kernel nuovi) rimuoviamo il
+# flag: il riavvio e' avvenuto, quindi non deve piu' frenare nulla.
+# Il prefisso '-' rende il passo non fatale se il flag non esiste.
+ExecStartPre=-/bin/rm -f /opt/mineos/state/reboot-required
 # Il miner gira in foreground; questo wrapper fa "exec" del binario scelto.
 ExecStart=/opt/mineos/bin/mineos-agent.sh
 # Riavvio robusto: se il miner crasha, riparte.
 Restart=always
 RestartSec=15
-# Evita loop di restart troppo aggressivi.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 # Il mining è CPU/GPU intensivo: priorità I/O bassa per non affamare il sistema.
 Nice=5
 # Log su journald (consultabile con: journalctl -u mineos-agent -f).

@@ -20,8 +20,15 @@ MINER_USER="miner"
 MINER_PASS="miner"
 
 echo "[mineos-install] Configurazione permessi..."
-# Script eseguibili.
+# Script eseguibili (tutti). Il tar potrebbe non preservare il bit +x: lo
+# forziamo qui, ESPLICITAMENTE sul first-boot (causa storica del 203/EXEC).
 chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh 2>/dev/null || true
+chmod +x /opt/mineos/bin/first-boot-setup.sh 2>/dev/null || true
+# Verifica bloccante: senza questo script il first boot non parte.
+if [[ ! -x /opt/mineos/bin/first-boot-setup.sh ]]; then
+    echo "[mineos-install][ERRORE] /opt/mineos/bin/first-boot-setup.sh mancante o non eseguibile." >&2
+    exit 1
+fi
 # La cartella config contiene credenziali: accesso solo root.
 mkdir -p /opt/mineos/{config,state,logs,miners,backups}
 chmod 700 /opt/mineos/config

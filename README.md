@@ -122,7 +122,7 @@ mineos/
 
 | File          | Contenuto                                              |
 |---------------|-------------------------------------------------------|
-| `wallet.conf` | `KRX_USERNAME`, `KRX_WORKER`, `KRX_COIN`              |
+| `wallet.conf` | `KRX_USERNAME`, `KRX_WORKER`, `KRX_COIN`, `PAYOUT_MODE` (`manual`) |
 | `pools.conf`  | `POOL_URL`, `POOL_USER`, `POOL_PASS`                  |
 | `rig.conf`    | vendor GPU, miner, algoritmo, limiti termici/potenza, soglie watchdog |
 
@@ -151,11 +151,17 @@ openssl passwd -6 'LaTuaPasswordSicura'
 
 ### 3. (Consigliato) Compila i placeholder di produzione
 
-- **Checksum miner**: sostituisci `REPLACE_WITH_REAL_SHA256` nei cataloghi miner di
-  `opt/mineos/bin/first-boot-setup.sh` e `opt/mineos/bin/update-mineos.sh` con gli SHA256 reali
-  delle release ufficiali. Senza checksum, la verifica d'integrità viene saltata (solo `WARN`).
-- **Endpoint Kryptex**: l'`POOL_URL` viene generato dal first boot; verifica host/porta corretti
-  per il tuo coin dalla dashboard Kryptex.
+- **Checksum miner**: il catalogo miner (versione/URL/SHA256) è centralizzato in
+  `opt/mineos/bin/lib/common.sh` (`miner_catalog`) con SHA256 reali dalle release ufficiali.
+  Per aggiornare un miner, cambia insieme versione+URL+SHA256 in quell'unico punto.
+- **Endpoint Kryptex**: l'`POOL_URL` viene generato dal first boot tramite `kryptex_pool_url`
+  (mappa coin→host:porta reali di Kryptex). Host e porta variano per coin
+  (es. `prl:7048`, `rvn:7031`, `etc:7033`, `erg:7021`, `kas:7011`).
+- **Pearl (PRL)**: di default mineOS mina **Pearl** (`prl`, algoritmo `pearlhash`) con
+  **SRBMiner-MULTI** (selezionato automaticamente per `pearlhash` su NVIDIA/AMD).
+- **Payout MANUALE**: mineOS **non** automatizza payout né conversioni. Il saldo si accumula
+  sul tuo account Kryptex e i prelievi si eseguono **a mano dalla dashboard** `kryptex.com`
+  (`PAYOUT_MODE="manual"` in `wallet.conf`; riepilogo in `state/payout.txt`).
 
 ### 4. Genera l'ISO
 
@@ -212,9 +218,12 @@ In alternativa puoi usare strumenti grafici come **balenaEtcher**.
 1. Inserisci l'USB nel rig e avvia da USB (**UEFI** consigliato).
 2. L'installer parte **automaticamente** (timeout GRUB di pochi secondi), installa Ubuntu in modo non presidiato, inietta mineOS e riavvia.
 3. Al primo boot reale, su schermo (`tty1`), parte il **wizard Kryptex**:
-   - **Username/Wallet Kryptex** — dalla tua dashboard Kryptex.
    - **Nome rig** e **nome worker**.
-   - **Coin/algoritmo** (es. `kawpow`, `etchash`, `autolykos2`).
+   - **Coin** da minare (ticker, default **`prl`** = Pearl/`pearlhash`; es. anche `rvn`, `kas`).
+   - **Username/Wallet Kryptex** usato come "wallet" nel miner (Mining Username `krxXXXXXX`,
+     email o wallet della moneta).
+   - **Payout**: **MANUALE** dalla dashboard Kryptex. mineOS non automatizza prelievi né
+     conversioni: il saldo si accumula su Kryptex e prelevi quando vuoi da `kryptex.com`.
 4. mineOS rileva la GPU, installa i driver, scarica i miner e genera la configurazione.
 5. Se sono stati installati i driver NVIDIA, viene richiesto un **reboot**; dopo il riavvio il mining parte da solo.
 
@@ -424,9 +433,9 @@ I candidati si definiscono nell'array `CANDIDATES` di `profit-switch.conf`, una 
 ```ini
 # "ALGO|MINER|POOL_URL|WTM_TAG|OUR_HASHRATE|REF_HASHRATE|STATIC_SCORE"
 CANDIDATES=(
-  "kawpow|trex|stratum+tcp://rvn.kryptex.network:7777|RVN|18000000|1000000000|1.00"
-  "etchash|trex|stratum+tcp://etc.kryptex.network:7777|ETC|60000000|1000000000|1.10"
-  "autolykos2|lolminer|stratum+tcp://ergo.kryptex.network:7777|ERG|180000000|1000000000|0.90"
+  "kawpow|trex|stratum+tcp://rvn.kryptex.network:7031|RVN|18000000|1000000000|1.00"
+  "etchash|trex|stratum+tcp://etc.kryptex.network:7033|ETC|60000000|1000000000|1.10"
+  "autolykos2|lolminer|stratum+tcp://erg.kryptex.network:7021|ERG|180000000|1000000000|0.90"
 )
 ```
 

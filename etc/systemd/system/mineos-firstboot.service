@@ -15,9 +15,11 @@ ConditionPathExists=!/opt/mineos/state/first-boot.done
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/opt/mineos/bin/first-boot-setup.sh
-# Il wizard è interattivo: lo agganciamo alla console di sistema.
-# (Per immagini pre-configurate usare invece --noninteractive con env file.)
+# Lanciato via 'bash' esplicito: NON dipende dal bit di esecuzione del file
+# (causa storica del 203/EXEC "non eseguibile" -> first-boot.done mai creato).
+ExecStart=/bin/bash /opt/mineos/bin/first-boot-setup.sh
+# Il wizard è interattivo ma con timeout: se nessuno risponde, prosegue con i
+# default e completa comunque (lo script crea sempre la config e il flag).
 StandardInput=tty
 StandardOutput=journal+console
 StandardError=journal+console

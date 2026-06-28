@@ -28,7 +28,7 @@ WTM_API_URL="https://whattomine.com/coins.json"
 # Suggerimento: calibra OUR_HASHRATE osservando l'hashrate effettivo per algo.
 # REF_HASHRATE serve a normalizzare il revenue dell'API alla tua potenza.
 CANDIDATES=(
-  "kawpow|trex|stratum+tcp://rvn.kryptex.network:7777|RVN|18000000|1000000000|1.00"
-  "etchash|trex|stratum+tcp://etc.kryptex.network:7777|ETC|60000000|1000000000|1.10"
-  "autolykos2|lolminer|stratum+tcp://ergo.kryptex.network:7777|ERG|180000000|1000000000|0.90"
+  "kawpow|trex|stratum+tcp://rvn.kryptex.network:7031|RVN|18000000|1000000000|1.00"
+  "etchash|trex|stratum+tcp://etc.kryptex.network:7033|ETC|60000000|1000000000|1.10"
+  "autolykos2|lolminer|stratum+tcp://erg.kryptex.network:7021|ERG|180000000|1000000000|0.90"
 )

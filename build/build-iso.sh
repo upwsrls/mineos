@@ -36,6 +36,16 @@ SRC_ISO="${1:-${WORK_DIR}/${UBUNTU_ISO_NAME}}"
 log() { printf '\033[1;32m[build]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[build][ERRORE]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Editing in-place portabile: GNU sed (-i) e BSD/macOS sed (-i '') hanno una
+# sintassi incompatibile. Usiamo un file temporaneo cosi' funziona ovunque ed
+# evitiamo di lasciare grub.cfg corrotto/non patchato (= ISO che non avvia
+# l'autoinstall) quando la build gira su macOS.
+sed_inplace() {
+    local expr="$1" file="$2" tmp
+    tmp="$(mktemp)"
+    sed "$expr" "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
 # --- Pre-flight -------------------------------------------------------------
 command -v xorriso >/dev/null || die "xorriso mancante. Installa: sudo apt-get install -y xorriso"
 [[ -f "${SCRIPT_DIR}/autoinstall/user-data" ]] || die "Manca autoinstall/user-data"
@@ -89,9 +99,18 @@ GRUB_CFG="${ISO_EXTRACT}/boot/grub/grub.cfg"
 # Aggiunge i parametri kernel a tutte le voci di boot (token '---').
 #   autoinstall                -> attiva subiquity non presidiato
 #   ds=nocloud;s=/cdrom/server -> dove trovare user-data/meta-data
-sed -i 's|---|autoinstall ds=nocloud\\;s=/cdrom/server/ ---|g' "${GRUB_CFG}"
+# Il ';' va passato a GRUB come '\;' (altrimenti GRUB lo interpreta come
+# separatore di comandi e il parametro 's=' viene perso -> autoinstall non
+# trova il seed e l'installer parte in modalita' interattiva).
+# Idempotente: non ripatchare se i parametri ci sono gia'.
+if ! grep -q 'autoinstall' "${GRUB_CFG}"; then
+    sed_inplace 's|---|autoinstall ds=nocloud\\;s=/cdrom/server/ ---|g' "${GRUB_CFG}"
+fi
+# Verifica che la patch sia andata a buon fine (token '---' presente nell'ISO).
+grep -q 'autoinstall ds=nocloud' "${GRUB_CFG}" \
+    || die "Patch GRUB fallita: parametri autoinstall non presenti in grub.cfg"
 # Timeout breve per partire subito.
-sed -i 's|^set timeout=.*|set timeout=3|' "${GRUB_CFG}"
+sed_inplace 's|^set timeout=.*|set timeout=3|' "${GRUB_CFG}"
 
 # --- 6. Ricostruisci l'ISO preservando il boot BIOS+UEFI -------------------
 # Tecnica robusta: leggiamo dall'ISO originale gli argomenti esatti di boot
@@ -102,9 +121,13 @@ xorriso -indev "${SRC_ISO}" -report_el_torito as_mkisofs 2>/dev/null > "${BOOT_A
 [[ -s "${BOOT_ARGS_FILE}" ]] || die "Impossibile leggere i parametri El Torito dall'ISO."
 
 # Converte le opzioni (con quoting xorriso) in un array bash.
+# NB: scartiamo la riga '-V ...' del report, altrimenti reintrodurrebbe il
+# volume label di Ubuntu sovrascrivendo il nostro '-V "MINEOS_2404"' (l'ultimo
+# '-V' sulla riga di comando vince). Il label resterebbe quello di Ubuntu.
 BOOT_OPTS=()
 while IFS= read -r line; do
     [[ -z "${line}" ]] && continue
+    [[ "${line}" == -V\ * ]] && continue
     # 'eval' interpreta le virgolette singole prodotte da xorriso in modo sicuro
     # (input generato dal tool, non dall'utente).
     eval "BOOT_OPTS+=( ${line} )"

@@ -57,10 +57,11 @@ autoinstall:
     - pciutils
     - jq
 
-  # Aggiornamenti durante l'installer disattivati: li gestisce update-mineos.sh.
+  # Aggiornamenti durante l'installer: solo pocket -security (il resto lo
+  # gestisce update-mineos.sh sul sistema installato).
+  # NB: 'package_update'/'package_upgrade' sono direttive cloud-init, NON chiavi
+  # autoinstall: messe qui sotto vengono rifiutate dallo schema subiquity.
   updates: security
-  package_update: true
-  package_upgrade: false
 
   # --- Comandi post-installazione (target montato in /target) --------------
   # /cdrom = ISO montata. Estraiamo il payload mineOS nel sistema installato

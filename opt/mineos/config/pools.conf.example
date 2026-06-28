@@ -2,8 +2,12 @@
 # Copia in pools.conf e compila con i dati reali della tua dashboard Kryptex.
 # Il file reale NON va committato (vedi .gitignore).
 
-# Endpoint stratum Kryptex per il coin scelto (host/porta dalla dashboard).
-POOL_URL="stratum+tcp://kawpow.kryptex.network:7777"
-# Formato richiesto: username.worker
-POOL_USER="il-tuo-username.nome-worker"
+# Endpoint stratum Kryptex per il coin scelto (host E porta variano per coin).
+# Esempi reali: prl:7048 (Pearl/PearlHash), rvn:7031 (KawPow), etc:7033, erg:7021,
+# kas:7011 - vedi pool.kryptex.com. SSL: stessa host, porta +1000 (es. prl:8048).
+POOL_URL="stratum+tcp://prl.kryptex.network:7048"
+# Formato: <account>.<worker>  (con email: <email>/<worker>).
+# Payout MANUALE: <account> è il tuo Mining Username/email o wallet Kryptex; i
+# prelievi si fanno a mano dalla dashboard Kryptex.
+POOL_USER="krxXXXXXX.nome-worker"
 POOL_PASS="x"

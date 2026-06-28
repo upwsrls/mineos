@@ -34,6 +34,16 @@ AGENT_ENV="${MINEOS_STATE}/agent.env"   # consumato dal watchdog
 # Caricamento configurazione
 # ----------------------------------------------------------------------------
 load_all_conf() {
+    # Pre-check con messaggio azionabile: se manca la config, il first boot non
+    # ha completato. Meglio un errore chiaro che un 'source' criptico.
+    local missing=0 f
+    for f in rig.conf wallet.conf pools.conf; do
+        [[ -f "${MINEOS_CONFIG}/${f}" ]] || { log ERROR "Config mancante: ${MINEOS_CONFIG}/${f}"; missing=1; }
+    done
+    if [[ "$missing" -eq 1 ]]; then
+        die "Configurazione mineOS incompleta. Esegui il first boot: bash /opt/mineos/bin/first-boot-setup.sh"
+    fi
+
     load_conf "${MINEOS_CONFIG}/rig.conf"
     load_conf "${MINEOS_CONFIG}/wallet.conf"
     load_conf "${MINEOS_CONFIG}/pools.conf"
@@ -48,8 +58,17 @@ load_all_conf() {
     : "${GPU_POWER_LIMIT_W:=0}"
     : "${GPU_CORE_OFFSET:=0}"
     : "${GPU_MEM_OFFSET:=0}"
+    # Payout (da wallet.conf): MANUALE dalla dashboard Kryptex (default).
+    : "${PAYOUT_MODE:=manual}"
 
-    log INFO "Config caricata: miner=$MINER algo=$ALGO pool=$POOL_URL user=$POOL_USER"
+    # Normalizza l'algoritmo: i miner rifiutano i ticker (es. 'PRL'/'RVN').
+    # Difensivo anche per rig.conf già scritti con un valore errato (niente
+    # bisogno di rieditare il file: la correzione avviene al caricamento).
+    local algo_in="$ALGO"
+    ALGO="$(normalize_algo "$ALGO")"
+    [[ "$algo_in" != "$ALGO" ]] && log WARN "Algoritmo '${algo_in}' normalizzato in '${ALGO}'."
+
+    log INFO "Config caricata: miner=$MINER algo=$ALGO pool=$POOL_URL user=$POOL_USER payout=${PAYOUT_MODE} (prelievi dalla dashboard Kryptex)"
 }
 
 # Estrae host:porta da un URL tipo stratum+tcp://host:porta (per i miner che
@@ -98,16 +117,45 @@ apply_tuning() {
 miner_dir() { echo "${MINEOS_MINERS}/${MINER}/current"; }
 
 find_miner_binary() {
+    local base="${MINEOS_MINERS}/${MINER}"
     local dir; dir="$(miner_dir)"
-    [[ -d "$dir" ]] || die "Miner '$MINER' non installato (manca $dir). Esegui update-mineos.sh."
-    local bin=""
+
+    # 'current' è un symlink alla versione attiva. BUG STORICO: 'find <symlink>'
+    # in modalità -P (default) NON entra nella cartella puntata, quindi non
+    # trovava mai il binario -> die -> exit 1. Risolviamo prima il symlink.
+    if [[ -e "$dir" || -L "$dir" ]]; then
+        dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
+    fi
+    # Fallback: se 'current' manca o è rotto, usa la versione più recente.
+    if [[ ! -d "$dir" ]]; then
+        dir="$(find -L "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
+    fi
+    [[ -d "$dir" ]] || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners"
+
+    # Nomi binario noti per ciascun miner (i tar non sono uniformi su maiuscole).
+    local -a candidates=()
     case "$MINER" in
-        trex)     bin="$(find "$dir" -maxdepth 1 -type f -name 't-rex' | head -1)" ;;
-        lolminer) bin="$(find "$dir" -maxdepth 1 -type f -name 'lolMiner' | head -1)" ;;
-        srbminer) bin="$(find "$dir" -maxdepth 1 -type f -name 'SRBMiner-MULTI' | head -1)" ;;
-        *)        bin="$(find "$dir" -maxdepth 1 -type f -perm -u+x | head -1)" ;;
+        trex)     candidates=(t-rex T-Rex) ;;
+        lolminer) candidates=(lolMiner lolminer) ;;
+        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
     esac
-    [[ -n "$bin" && -x "$bin" ]] || die "Binario del miner '$MINER' non trovato/eseguibile in $dir."
+
+    local bin="" name
+    for name in "${candidates[@]}"; do
+        if [[ -f "${dir}/${name}" ]]; then
+            # Auto-fix permessi: se il binario c'è ma non è eseguibile, +x.
+            [[ -x "${dir}/${name}" ]] || chmod +x "${dir}/${name}" 2>/dev/null || true
+            [[ -x "${dir}/${name}" ]] && { bin="${dir}/${name}"; break; }
+        fi
+    done
+    # Fallback robusto: primo file regolare eseguibile nella cartella.
+    # '-print -quit' evita SIGPIPE/pipefail di 'find | head'.
+    if [[ -z "$bin" ]]; then
+        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
+    fi
+
+    [[ -n "$bin" && -x "$bin" ]] \
+        || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners"
     echo "$bin"
 }
 
@@ -141,11 +189,14 @@ build_args() {
             ;;
         srbminer)
             API_PORT="$API_PORT_SRB"; API_TYPE="srbminer"
+            # --disable-cpu: rig GPU, evitiamo il mining CPU (come da comando
+            # ufficiale Kryptex per pearlhash/Pearl e in generale per i rig GPU).
             MINER_ARGS=(
                 --algorithm "$ALGO"
                 --pool "$hostport"
                 --wallet "$POOL_USER"
                 --password "$POOL_PASS"
+                --disable-cpu
                 --api-enable
                 --api-port "$API_PORT"
             )
@@ -193,6 +244,10 @@ graceful_stop() {
 # ----------------------------------------------------------------------------
 main() {
     require_root
+    # Il riavvio (se richiesto) è già avvenuto: rimuovi il flag così non resta
+    # appeso e non confonde watchdog/diagnostica. (Anche ExecStartPre lo fa.)
+    clear_reboot_required
+    mkdir -p "${MINEOS_STATE}" "${MINEOS_LOGS}" 2>/dev/null || true
     load_all_conf
     apply_tuning
     build_args
@@ -213,7 +268,7 @@ main() {
     "$bin" "${MINER_ARGS[@]}" &
     MINER_PID=$!
     log INFO "Miner avviato con pid=$MINER_PID."
-    notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL}"
+    notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL} (payout manuale da dashboard Kryptex)"
 
     # 'wait' ritorna quando il miner esce o quando arriva un segnale.
     wait "$MINER_PID"

@@ -23,8 +23,15 @@ set -uo pipefail
 
 # --- Carica la libreria comune ----------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMON_LIB="${SCRIPT_DIR}/lib/common.sh"
+# Fallback al percorso canonico se lo script viene invocato da altrove.
+[[ -f "$COMMON_LIB" ]] || COMMON_LIB="/opt/mineos/bin/lib/common.sh"
+if [[ ! -f "$COMMON_LIB" ]]; then
+    echo "[first-boot][ERRORE] libreria comune non trovata: $COMMON_LIB" >&2
+    exit 1
+fi
 # shellcheck source=lib/common.sh
-source "${SCRIPT_DIR}/lib/common.sh"
+source "$COMMON_LIB"
 
 FORCE=0
 NONINTERACTIVE=0   # se 1, legge i valori da env invece che da prompt (immagini pre-config)
@@ -49,6 +56,8 @@ bootstrap_dirs() {
     mkdir -p "${MINEOS_BIN}" "${MINEOS_MINERS}" "${MINEOS_CONFIG}" \
              "${MINEOS_STATE}" "${MINEOS_LOGS}"
     chmod 700 "${MINEOS_CONFIG}"   # qui stanno le credenziali: niente lettura ad altri
+    # I binari miner devono essere attraversabili/eseguibili (root li lancia).
+    chmod 755 "${MINEOS_MINERS}" "${MINEOS_STATE}" "${MINEOS_LOGS}" 2>/dev/null || true
     log INFO "Struttura cartelle pronta sotto ${MINEOS_ROOT}."
 }
 
@@ -87,8 +96,26 @@ install_nvidia_driver() {
     log INFO "Installazione driver NVIDIA proprietari..."
     case "$pm" in
         apt)
+            run apt-get update -y
             run env DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
-            run ubuntu-drivers autoinstall
+            # Individua il driver raccomandato (es. 'nvidia-driver-535') e installa
+            # ESPLICITAMENTE anche nvidia-utils-<ver> (fornisce 'nvidia-smi'),
+            # così non manca dopo il reboot.
+            local rec ver
+            rec="$(ubuntu-drivers devices 2>/dev/null | grep -oE 'nvidia-driver-[0-9]+' | sort -V | tail -1)"
+            if [[ -n "$rec" ]]; then
+                ver="${rec#nvidia-driver-}"
+                log INFO "Driver raccomandato: ${rec} (installo driver + nvidia-utils-${ver})."
+                run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                    "nvidia-driver-${ver}" "nvidia-utils-${ver}" \
+                    || run ubuntu-drivers autoinstall
+            else
+                log WARN "Nessun driver raccomandato rilevato: uso 'ubuntu-drivers install'."
+                run ubuntu-drivers install || run ubuntu-drivers autoinstall
+                # Tentativo best-effort di garantire nvidia-smi.
+                run env DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-utils \
+                    || log WARN "nvidia-utils generico non disponibile (ok se il driver lo include)."
+            fi
             ;;
         dnf)
             run dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda
@@ -98,8 +125,8 @@ install_nvidia_driver() {
             ;;
         *) die "Installazione driver NVIDIA non supportata su questo package manager." ;;
     esac
-    log INFO "Driver NVIDIA installati: necessario REBOOT prima del mining."
-    touch "${MINEOS_STATE}/reboot-required"
+    log INFO "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel."
+    mark_reboot_required
 }
 
 install_amd_driver() {
@@ -150,10 +177,12 @@ prompt_value() {
         printf -v "$__dest" '%s' "${!__dest:-$default}"
         return 0
     fi
+    # Timeout: se nessuno risponde alla console entro 120s, usa il default e
+    # prosegui (first boot non presidiato non deve restare appeso su 'read').
     if [[ "$silent" -eq 1 ]]; then
-        read -rsp "$text " input; echo
+        read -rsp "$text " -t 120 input || input=""; echo
     else
-        read -rp "$text${default:+ [$default]} " input
+        read -rp "$text${default:+ [$default]} " -t 120 input || input=""
     fi
     printf -v "$__dest" '%s' "${input:-$default}"
 }
@@ -163,41 +192,38 @@ run_wizard() {
     echo "==================================================="
     echo "          mineOS - Configurazione iniziale"
     echo "==================================================="
-    echo "Trovi username e worker nella dashboard Kryptex"
-    echo "(sezione 'Mining manuale / GPU miner setup')."
+    echo "Mining su Kryptex Pool. I PAYOUT sono MANUALI: si gestiscono dalla"
+    echo "dashboard Kryptex (mineOS non automatizza prelievi né conversioni)."
     echo
 
     : "${KRX_USERNAME:=}"; : "${KRX_WORKER:=}"; : "${KRX_COIN:=}"; : "${RIG_NAME:=}"
 
+    prompt_value RIG_NAME   "Nome del rig:" "$(hostname -s)"
+    prompt_value KRX_WORKER "Nome worker:" "$RIG_NAME"
+
+    echo
+    echo "Coin Kryptex da minare (ticker). Default: prl (Pearl, algoritmo pearlhash)."
+    echo "Altri esempi: rvn (KawPow), kas (kHeavyHash), etc (Etchash), erg (Autolykos2)."
+    prompt_value KRX_COIN "Coin (ticker):" "prl"
+
+    echo
+    echo "Username/Wallet Kryptex usato come 'wallet' nel miner."
+    echo "Per gestire i payout dalla dashboard usa il tuo account Kryptex"
+    echo "(Mining Username 'krxXXXXXX' oppure email); in alternativa un wallet ${KRX_COIN}."
     prompt_value KRX_USERNAME "Username/Wallet Kryptex:"
     if [[ -z "$KRX_USERNAME" ]]; then
         KRX_USERNAME="CHANGE_ME"
-        log WARN "Username Kryptex non fornito: imposto '$KRX_USERNAME'. Modificalo in wallet.conf prima di minare."
+        log WARN "Username/Wallet Kryptex non fornito: imposto '$KRX_USERNAME'. Correggilo in pools.conf prima di minare."
     fi
 
-    prompt_value RIG_NAME    "Nome del rig:" "$(hostname -s)"
-    prompt_value KRX_WORKER  "Nome worker:" "$RIG_NAME"
-
-    echo
-    echo "Coin/algoritmo da minare (deve corrispondere a un pool Kryptex valido)."
-    echo "Esempi tipici: kawpow (RVN), etchash (ETC), autolykos2 (ERGO)."
-    prompt_value KRX_COIN "Coin/algoritmo:" "kawpow"
-
-    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN"
+    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale da dashboard)."
 }
 
 # ============================================================================
 # STEP 3 - Download miner nativi
 # ============================================================================
-# Tabella miner: NOME|VERSIONE|URL|SHA256|VENDOR
-# Aggiorna versioni/URL/checksum dai repo ufficiali (GitHub releases).
-miner_catalog() {
-    cat <<'EOF'
-trex|0.26.8|https://github.com/trexminer/T-Rex/releases/download/0.26.8/t-rex-0.26.8-linux.tar.gz|REPLACE_WITH_REAL_SHA256|nvidia
-lolminer|1.88|https://github.com/Lolliedieb/lolMiner-releases/releases/download/1.88/lolMiner_v1.88_Lin64.tar.gz|REPLACE_WITH_REAL_SHA256|both
-srbminer|2.6.8|https://github.com/doktor83/SRBMiner-Multi/releases/download/2.6.8/SRBMiner-Multi-2-6-8-Linux.tar.gz|REPLACE_WITH_REAL_SHA256|amd
-EOF
-}
+# Il catalogo miner (NOME|VERSIONE|URL|SHA256|VENDOR) è centralizzato in
+# common.sh (miner_catalog) per evitare disallineamenti tra first-boot e update.
 
 download_miner() {
     # download_miner <nome> <versione> <url> <sha256>
@@ -216,7 +242,15 @@ download_miner() {
     else
         log WARN "Checksum non verificato per $name (placeholder o DRY_RUN)."
     fi
-    run tar -xzf "${tmp}/pkg.tar.gz" -C "$dest" --strip-components=1
+    # Estrazione robusta (indipendente dal layout dell'archivio: T-Rex "flat"
+    # oppure miner con cartella top-level). Vedi extract_miner_pkg in common.sh.
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log INFO "DRY_RUN: salto estrazione di $name."
+    elif ! extract_miner_pkg "${tmp}/pkg.tar.gz" "$dest"; then
+        log WARN "Estrazione fallita per $name: salto (proseguo)."
+        rm -rf "$tmp"
+        return 1
+    fi
     rm -rf "$tmp"
     # Symlink alla versione attiva: facilita rollback (vedi update-mineos.sh).
     ln -sfn "$dest" "${MINEOS_MINERS}/${name}/current"
@@ -243,9 +277,17 @@ write_configs() {
     # Valori di default per i campi non raccolti dal wizard (modalità robusta).
     : "${KRX_USERNAME:=CHANGE_ME}"
     : "${KRX_WORKER:=$(hostname -s 2>/dev/null || echo rig)}"
-    : "${KRX_COIN:=kawpow}"
+    : "${KRX_COIN:=prl}"
 
-    # --- wallet.conf: credenziali Kryptex (solo se mancante) -----------------
+    # L'algoritmo per il miner va normalizzato: l'utente potrebbe aver inserito
+    # un ticker (es. 'PRL', 'RVN') che i miner NON accettano come algoritmo.
+    local algo; algo="$(normalize_algo "${KRX_COIN}")"
+
+    # Payout MANUALE: si mina la moneta scelta su Kryptex e i prelievi si gestiscono
+    # dalla dashboard Kryptex. mineOS non automatizza payout né conversioni.
+    local pool_user; pool_user="$(kryptex_pool_user "${KRX_USERNAME}" "${KRX_WORKER}")"
+
+    # --- wallet.conf: credenziali Kryptex + payout (solo se mancante) ---------
     if [[ -f "${MINEOS_CONFIG}/wallet.conf" ]]; then
         log INFO "wallet.conf già presente: lo mantengo."
     else
@@ -254,24 +296,30 @@ write_configs() {
 KRX_USERNAME="${KRX_USERNAME}"
 KRX_WORKER="${KRX_WORKER}"
 KRX_COIN="${KRX_COIN}"
+
+# Payout: MANUALE dalla dashboard Kryptex (mineOS non automatizza prelievi).
+# Accedi a kryptex.com per consultare il saldo ed eseguire i prelievi a mano.
+PAYOUT_MODE="manual"
 EOF
         chmod 600 "${MINEOS_CONFIG}/wallet.conf"
-        log INFO "wallet.conf creato."
+        log INFO "wallet.conf creato (payout=manuale)."
     fi
 
     # --- pools.conf: endpoint stratum Kryptex (solo se mancante) -------------
     if [[ -f "${MINEOS_CONFIG}/pools.conf" ]]; then
         log INFO "pools.conf già presente: lo mantengo."
     else
+        local pool_url; pool_url="$(kryptex_pool_url "${KRX_COIN}")"
         cat > "${MINEOS_CONFIG}/pools.conf" <<EOF
-# mineOS - pool Kryptex per coin=${KRX_COIN}
-# Sostituisci host/porta con i valori reali della tua dashboard Kryptex.
-POOL_URL="stratum+tcp://${KRX_COIN}.kryptex.network:7777"
-POOL_USER="${KRX_USERNAME}.${KRX_WORKER}"
+# mineOS - pool Kryptex per coin=${KRX_COIN} (payout manuale da dashboard)
+# Endpoint reale Kryptex (host:porta dipendono dal coin). Vedi pool.kryptex.com.
+POOL_URL="${pool_url}"
+# Formato: <account>.<worker> (con email: <email>/<worker>).
+POOL_USER="${pool_user}"
 POOL_PASS="x"
 EOF
         chmod 600 "${MINEOS_CONFIG}/pools.conf"
-        log INFO "pools.conf creato."
+        log INFO "pools.conf creato (pool=${pool_url} user=${pool_user})."
     fi
 
     # --- rig.conf: hardware, miner scelto, OC/limiti (solo se mancante) ------
@@ -283,11 +331,15 @@ EOF
             amd) default_miner="srbminer" ;;
             *)   default_miner="trex" ;;     # nvidia/both/none -> trex di default
         esac
+        # Alcuni algoritmi richiedono un miner specifico (es. pearlhash->srbminer):
+        # in tal caso l'override prevale sul default per-vendor.
+        local pref_miner; pref_miner="$(miner_for_algo "$algo")"
+        [[ -n "$pref_miner" ]] && default_miner="$pref_miner"
         cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
 # mineOS - configurazione rig
 GPU_VENDOR="${vendor}"
 MINER="${default_miner}"            # trex | lolminer | srbminer
-ALGO="${KRX_COIN}"
+ALGO="${algo}"                      # algoritmo normalizzato (es. kawpow)
 
 # Limiti termici/potenza (0 = non gestito da mineOS)
 GPU_POWER_LIMIT_W="0"               # es. 120 (NVIDIA: nvidia-smi -pl)
@@ -313,17 +365,17 @@ EOF
 # ============================================================================
 # STEP 5 - Finalizzazione
 # ============================================================================
+# Abilita i servizi (NON li avvia). Grazie a WantedBy=multi-user.target
+# partiranno da soli a ogni boot; nessuna condizione bloccante li frena
+# (l'agent ripulisce da solo il flag reboot-required al proprio avvio).
 enable_services() {
     sysctl_safe enable mineos-agent.service mineos-watchdog.service
     # Timer profit-switch sempre abilitato: lo script si auto-gate su rig.conf.
     sysctl_safe enable mineos-profit-switch.timer
+}
 
-    if [[ -f "${MINEOS_STATE}/reboot-required" ]]; then
-        log INFO "Reboot richiesto (driver appena installati): i servizi partiranno dopo il riavvio."
-        return 0
-    fi
-
-    # Avvio automatico del mining dopo il setup.
+# Avvia il mining adesso (caso "nessun reboot necessario").
+start_services_now() {
     sysctl_safe start mineos-agent.service mineos-watchdog.service
     sysctl_safe start mineos-profit-switch.timer
 
@@ -344,13 +396,33 @@ mark_done() {
     # Disabilita il servizio di first-boot così non rigira ai boot successivi.
     sysctl_safe disable mineos-firstboot.service
     log INFO "First boot completato."
-    if [[ -f "${MINEOS_STATE}/reboot-required" ]]; then
-        notify FIRSTBOOT_DONE "Setup completato per coin=${KRX_COIN}. Reboot necessario per i driver GPU, poi il mining parte da solo."
-        echo
-        echo ">>> Driver GPU installati: riavvia il sistema per iniziare a minare. <<<"
-    else
-        notify FIRSTBOOT_DONE "Setup completato per coin=${KRX_COIN}. Mining in avvio."
-    fi
+}
+
+# Scrive un riepilogo in state/payout.txt: il payout è MANUALE dalla dashboard
+# Kryptex (mineOS non automatizza prelievi). Idempotente.
+write_payout_summary() {
+    local coin="${KRX_COIN:-prl}"
+    local user="${KRX_USERNAME:-CHANGE_ME}"
+    local f="${MINEOS_STATE}/payout.txt"
+    umask 077
+    cat > "$f" <<EOF
+mineOS - Payout MANUALE (dashboard Kryptex)
+===========================================
+Coin minato : ${coin}
+Wallet/User : ${user}
+Payout      : MANUALE. mineOS non automatizza prelievi né conversioni.
+
+Cosa fa mineOS in automatico:
+  - mina ${coin} sul pool Kryptex (vedi POOL_URL/POOL_USER in pools.conf).
+
+Prelievi (a mano) su https://kryptex.com:
+  1) accedi al tuo account/saldo Kryptex;
+  2) controlla il saldo accumulato per il worker;
+  3) avvia il prelievo manuale verso il wallet/indirizzo che preferisci,
+     quando vuoi (nessuna soglia di auto-withdraw impostata da mineOS).
+EOF
+    chmod 600 "$f" 2>/dev/null || true
+    log INFO "Riepilogo payout (manuale) scritto in ${f}."
 }
 
 # ============================================================================
@@ -368,8 +440,31 @@ main() {
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
+
+    write_payout_summary
+
+    # Abilita i servizi e segna il first-boot come completato PRIMA di avviarli,
+    # così la condizione 'first-boot.done' dell'agent è già soddisfatta.
     enable_services
     mark_done
+
+    local payout_note=" Payout MANUALE dalla dashboard Kryptex (vedi state/payout.txt)."
+
+    if reboot_required; then
+        # Driver/kernel appena installati: serve un riavvio per caricarli.
+        # Il rig è non presidiato → riavviamo noi. Il flag reboot-required resta
+        # su disco e verrà rimosso dall'agent al boot successivo, quando il
+        # mining parte AUTOMATICAMENTE (nessuna condizione bloccante).
+        notify FIRSTBOOT_DONE "Setup completato (coin=${KRX_COIN}).${payout_note} Riavvio per attivare i driver GPU; il mining parte da solo dopo il reboot."
+        log INFO "Riavvio automatico per attivare i driver GPU: il mining partirà da solo dopo il reboot."
+        echo
+        echo ">>> Driver GPU installati. Riavvio in corso: il mining partirà da solo dopo il riavvio. <<<"
+        sync
+        sysctl_safe reboot
+    else
+        notify FIRSTBOOT_DONE "Setup completato (coin=${KRX_COIN}).${payout_note} Mining in avvio."
+        start_services_now
+    fi
 }
 
 main "$@"

@@ -2,6 +2,10 @@
 # Copia in wallet.conf e compila. Il file reale NON va committato (vedi .gitignore).
 # Normalmente viene generato in automatico dal wizard di first-boot-setup.sh.
 
-KRX_USERNAME="il-tuo-username-o-wallet-kryptex"
+KRX_USERNAME="il-tuo-account-o-wallet-kryptex"   # Mining Username 'krxXXXXXX', email o wallet
 KRX_WORKER="nome-worker"
-KRX_COIN="kawpow"
+KRX_COIN="prl"                 # es. prl (Pearl/pearlhash), rvn (kawpow), kas...
+
+# Payout: MANUALE dalla dashboard Kryptex (mineOS non automatizza i prelievi).
+# Accedi a kryptex.com per consultare il saldo ed eseguire i prelievi a mano.
+PAYOUT_MODE="manual"
