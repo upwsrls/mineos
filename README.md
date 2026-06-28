@@ -102,6 +102,7 @@ mineos/
 │   │   ├── update-mineos.sh          # updater con rollback
 │   │   ├── mineos-agent.sh           # avvia il miner
 │   │   ├── fix-rig-pearl.sh          # fix one-shot su rig già installati
+│   │   ├── fix-nvidia-boot.sh        # fix boot i2c/ucsi_ccg NVIDIA
 │   │   └── watchdog.sh               # monitoraggio 24/7
 │   ├── config/                       # rig.conf, wallet.conf, pools.conf (chmod 700)
 │   ├── miners/                       # binari miner versionati + symlink "current"
@@ -563,13 +564,27 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 
 ### `nvidia-gpu i2c timeout` / `ucsi_ccg init failed -110` al boot
 - **Causa**: GPU NVIDIA da mining con funzione USB-C (.3) senza controller I2C reale. Il kernel prova `i2c_nvidia_gpu` + `ucsi_ccg` e fallisce con timeout. **Non blocca** CUDA/mining, ma sporca `tty1`.
-- **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot.
-- **Fix manuale su rig già installato**:
+- **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot (modprobe + initramfs + GRUB).
+
+**File nell'ISO** (inclusi nel payload `opt` + `etc`):
+
+| Percorso | Contenuto |
+|----------|-----------|
+| `etc/modprobe.d/mineos-nvidia-i2c.conf` | `blacklist i2c_nvidia_gpu`, `blacklist ucsi_ccg` |
+| `etc/modprobe.d/mineos-nvidia.conf` | `options nvidia NVreg_EnableUsbPd=0` |
+| `opt/mineos/bin/fix-nvidia-boot.sh` | Script fix one-shot su rig esistente |
+
+- **Fix su rig già installato** (consigliato):
+
+```bash
+sudo /opt/mineos/bin/fix-nvidia-boot.sh
+sudo reboot
+```
+
+Oppure insieme al fix Pearl:
 
 ```bash
 sudo /opt/mineos/bin/fix-rig-pearl.sh
-# oppure solo il fix NVIDIA:
-sudo bash -c 'source /opt/mineos/bin/lib/common.sh && apply_nvidia_boot_fix'
 sudo reboot
 ```
 

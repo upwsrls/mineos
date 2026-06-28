@@ -50,6 +50,8 @@ fix_nvidia_boot() {
     esac
 }
 
+# Alias: stesso fix NVIDIA, esposto anche come script standalone fix-nvidia-boot.sh
+
 fix_permissions() {
     log INFO "Correggo permessi script e cartelle..."
     chmod +x "${MINEOS_BIN}"/*.sh "${MINEOS_BIN}"/lib/*.sh 2>/dev/null || true

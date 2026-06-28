@@ -24,7 +24,7 @@ echo "[mineos-install] Configurazione permessi..."
 # forziamo qui, ESPLICITAMENTE su ogni script (causa storica del 203/EXEC).
 find /opt/mineos/bin -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh 2>/dev/null || true
-chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh 2>/dev/null || true
+chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh /opt/mineos/bin/fix-nvidia-boot.sh 2>/dev/null || true
 # Verifica bloccante: senza questo script il first boot non parte.
 if [[ ! -x /opt/mineos/bin/first-boot-setup.sh ]]; then
     echo "[mineos-install][ERRORE] /opt/mineos/bin/first-boot-setup.sh mancante o non eseguibile." >&2
@@ -64,6 +64,17 @@ if command -v update-initramfs >/dev/null 2>&1; then
     update-initramfs -u \
         && echo "[mineos-install] initramfs aggiornato (fix i2c NVIDIA)." \
         || echo "[mineos-install] AVVISO: update-initramfs fallito (proseguo)."
+fi
+# Blacklist precoce via kernel cmdline (multi-GPU mining).
+if [[ -f /etc/default/grub ]] && ! grep -q 'modprobe.blacklist=i2c_nvidia_gpu' /etc/default/grub 2>/dev/null; then
+    sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT=".*\)"/\1 modprobe.blacklist=i2c_nvidia_gpu modprobe.blacklist=ucsi_ccg"/' /etc/default/grub \
+        && echo "[mineos-install] GRUB: blacklist i2c/ucsi aggiunta." \
+        || echo "[mineos-install] AVVISO: patch GRUB fallita (proseguo)."
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub \
+            && echo "[mineos-install] GRUB aggiornato." \
+            || echo "[mineos-install] AVVISO: update-grub fallito (proseguo)."
+    fi
 fi
 
 echo "[mineos-install] Reload systemd e abilitazione servizi..."

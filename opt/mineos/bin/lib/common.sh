@@ -359,6 +359,19 @@ EOF
     else
         log WARN "update-initramfs assente: reboot dopo install driver per applicare il fix."
     fi
+
+    # Blacklist anche via kernel cmdline: copre il boot precoce (prima di modprobe.d).
+    local grub_default="/etc/default/grub"
+    if [[ -f "$grub_default" ]] && ! grep -q 'modprobe.blacklist=i2c_nvidia_gpu' "$grub_default" 2>/dev/null; then
+        log INFO "Aggiungo blacklist i2c/ucsi a GRUB_CMDLINE_LINUX_DEFAULT..."
+        sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT=".*\)"/\1 modprobe.blacklist=i2c_nvidia_gpu modprobe.blacklist=ucsi_ccg"/' \
+            "$grub_default" \
+            || log WARN "Patch GRUB fallita (modifica manualmente /etc/default/grub)."
+        if command -v update-grub >/dev/null 2>&1; then
+            run update-grub \
+                || log WARN "update-grub fallito: esegui manualmente 'sudo update-grub' e reboot."
+        fi
+    fi
 }
 
 # --- Helper config -----------------------------------------------------------
