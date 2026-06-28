@@ -1,0 +1,21 @@
+# /etc/systemd/system/mineos-gpu-fan.service
+#
+# Daemon curva ventole GPU (temperatura target Pearl/pearlhash 24/7).
+
+[Unit]
+Description=mineOS GPU fan curve daemon
+After=mineos-gpu-oc.service mineos-agent.service
+Wants=mineos-gpu-oc.service
+ConditionPathExists=/opt/mineos/state/first-boot.done
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/mineos/bin/gpu-fan-daemon.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

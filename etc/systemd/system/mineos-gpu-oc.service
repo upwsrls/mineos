@@ -1,0 +1,20 @@
+# /etc/systemd/system/mineos-gpu-oc.service
+#
+# Applica profili OC NVIDIA (Pearl/pearlhash) prima del mining agent.
+
+[Unit]
+Description=mineOS GPU overclock (Pearl/pearlhash profiles)
+Wants=network-online.target
+After=network-online.target mineos-firstboot.service
+Before=mineos-agent.service
+ConditionPathExists=/opt/mineos/state/first-boot.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/mineos/bin/apply-gpu-oc.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

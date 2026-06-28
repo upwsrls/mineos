@@ -87,7 +87,17 @@ pool_hostport() {
 # ----------------------------------------------------------------------------
 apply_nvidia_tuning() {
     command -v nvidia-smi >/dev/null || return 0
-    # Abilita persistence mode per stabilità 24/7.
+    local oc_script="${MINEOS_BIN}/apply-gpu-oc.sh"
+    if [[ -x "$oc_script" && -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
+        # shellcheck disable=SC1090
+        source "${MINEOS_CONFIG}/gpu-oc.conf" 2>/dev/null || true
+        if [[ "${GPU_AUTO_OC:-false}" == "true" ]]; then
+            log INFO "OC NVIDIA: delego a apply-gpu-oc.sh (profili Pearl/pearlhash)."
+            run bash "$oc_script" || log WARN "apply-gpu-oc.sh fallito (proseguo mining)."
+            return 0
+        fi
+    fi
+    # Fallback: tuning base da rig.conf (senza gpu-oc.conf).
     run nvidia-smi -pm 1 || log WARN "nvidia-smi -pm 1 fallito."
     if [[ "${GPU_POWER_LIMIT_W}" != "0" ]]; then
         log INFO "Imposto power limit NVIDIA a ${GPU_POWER_LIMIT_W}W"

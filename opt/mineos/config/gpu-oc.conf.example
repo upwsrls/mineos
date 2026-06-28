@@ -1,0 +1,36 @@
+# mineOS - gpu-oc.conf (TEMPLATE)
+# Copia in gpu-oc.conf e adatta. Profili ottimizzati per Pearl (pearlhash) 24/7 su Kryptex.
+# Il file reale NON va committato (vedi .gitignore).
+
+# Abilita applicazione automatica OC (mineos-gpu-oc.service + mineos-agent).
+GPU_AUTO_OC="true"
+
+# Daemon ventole: regola fan speed in base a temperatura (curva per GPU).
+FAN_DAEMON="true"
+FAN_POLL_SEC="15"
+
+# Algoritmo attivo (informativo; profili ottimizzati per pearlhash).
+OC_ALGO="pearlhash"
+
+# --- Profili per modello GPU (match su nome nvidia-smi) ----------------------
+# Formato riga:
+#   MODEL_KEY|PL_W|CORE_MHZ|MEM_OFFSET_MHZ|TEMP_TARGET|FAN_MIN|FAN_MAX|TEMP_LO|TEMP_HI
+#
+#   MODEL_KEY       chiave match (rtx_3090, gtx_1080_ti, gtx_1080, gtx_1660_super, gtx_1660_ti, gtx_1660)
+#   PL_W            power limit Watt (nvidia-smi -pl)
+#   CORE_MHZ        clock core bloccato (lock-gpu-clocks min=max)
+#   MEM_OFFSET_MHZ  offset MHz sopra clocks.max.memory
+#   TEMP_TARGET     temperatura target °C (watchdog + fan curve)
+#   FAN_MIN/MAX     % ventola min/max sulla curva
+#   TEMP_LO/HI       °C inizio/fine rampa ventola
+#
+# Valori conservativi 24/7 per Pearl/pearlhash (SRBMiner). Calibra sul tuo rig.
+PROFILES=(
+  "rtx_3090|280|1350|800|65|45|100|52|72"
+  "gtx_1080_ti|150|1550|450|62|40|100|48|70"
+  "gtx_1080|130|1500|400|62|40|100|48|70"
+  "gtx_1660_super|85|1320|550|58|35|95|44|66"
+  "gtx_1660_ti|80|1320|650|58|35|95|44|66"
+  "gtx_1660|75|1260|450|58|35|95|44|66"
+  "default|100|1200|0|65|40|100|50|75"
+)

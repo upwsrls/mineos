@@ -368,6 +368,38 @@ sudo nano /opt/mineos/config/pools.conf    # POOL_URL, POOL_USER
 sudo systemctl restart mineos-agent
 ```
 
+### Overclock automatico (Pearl / pearlhash)
+
+Profili per rig eterogenei (RTX 3090, GTX 1080 Ti, GTX 1080, GTX 1660 Ti/Super/1660):
+
+```bash
+# Copia e personalizza profili
+sudo cp /opt/mineos/config/gpu-oc.conf.example /opt/mineos/config/gpu-oc.conf
+sudo nano /opt/mineos/config/gpu-oc.conf
+
+# Applica subito (power limit, core/mem lock, curva ventole)
+sudo /opt/mineos/bin/apply-gpu-oc.sh
+
+# Anteprima senza modificare
+sudo /opt/mineos/bin/apply-gpu-oc.sh --dry-run
+
+# Ripristina default NVIDIA
+sudo /opt/mineos/bin/apply-gpu-oc.sh --reset
+```
+
+Ogni GPU riceve il profilo in base al nome (`nvidia-smi`). Servizi systemd:
+
+- `mineos-gpu-oc.service` — OC al boot (prima del miner)
+- `mineos-gpu-fan.service` — curva ventole continua (TEMP_LO..TEMP_HI → FAN_MIN..FAN_MAX)
+
+Verifica:
+
+```bash
+systemctl status mineos-gpu-oc mineos-gpu-fan
+nvidia-smi --query-gpu=index,name,power.limit,clocks.current.graphics,clocks.current.memory,temperature.gpu,fan.speed --format=csv
+cat /opt/mineos/state/gpu-oc-0.env
+```
+
 ---
 
 ## Notifiche Telegram

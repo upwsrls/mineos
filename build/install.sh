@@ -24,7 +24,7 @@ echo "[mineos-install] Configurazione permessi..."
 # forziamo qui, ESPLICITAMENTE su ogni script (causa storica del 203/EXEC).
 find /opt/mineos/bin -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh 2>/dev/null || true
-chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh /opt/mineos/bin/fix-nvidia-boot.sh /opt/mineos/bin/fix-gpu-detect.sh 2>/dev/null || true
+chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh /opt/mineos/bin/fix-nvidia-boot.sh /opt/mineos/bin/fix-gpu-detect.sh /opt/mineos/bin/apply-gpu-oc.sh /opt/mineos/bin/gpu-fan-daemon.sh 2>/dev/null || true
 # Verifica bloccante: senza questo script il first boot non parte.
 if [[ ! -x /opt/mineos/bin/first-boot-setup.sh ]]; then
     echo "[mineos-install][ERRORE] /opt/mineos/bin/first-boot-setup.sh mancante o non eseguibile." >&2
@@ -84,6 +84,7 @@ systemctl daemon-reload
 # agent e watchdog vengono abilitati subito; l'agent parte a ogni boot e fallisce
 # con messaggio chiaro se manca la config (nessuna ConditionPathExists bloccante).
 # Il watchdog attende first-boot.done (ConditionPathExists nel suo unit file).
+systemctl enable mineos-gpu-oc.service mineos-gpu-fan.service
 systemctl enable mineos-firstboot.service
 systemctl enable mineos-agent.service
 systemctl enable mineos-watchdog.service

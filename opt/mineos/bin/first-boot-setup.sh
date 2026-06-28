@@ -366,6 +366,21 @@ EOF
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
 }
 
+# Copia template OC Pearl/pearlhash se assente.
+setup_gpu_oc_config() {
+    if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
+        log INFO "gpu-oc.conf già presente."
+        return 0
+    fi
+    if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf.example" ]]; then
+        cp "${MINEOS_CONFIG}/gpu-oc.conf.example" "${MINEOS_CONFIG}/gpu-oc.conf"
+        chmod 600 "${MINEOS_CONFIG}/gpu-oc.conf"
+        log INFO "gpu-oc.conf creato da template (profili Pearl/pearlhash)."
+    else
+        log WARN "gpu-oc.conf.example mancante: OC automatico non configurato."
+    fi
+}
+
 # ============================================================================
 # STEP 5 - Finalizzazione
 # ============================================================================
@@ -373,6 +388,7 @@ EOF
 # partiranno da soli a ogni boot; nessuna condizione bloccante li frena
 # (l'agent ripulisce da solo il flag reboot-required al proprio avvio).
 enable_services() {
+    sysctl_safe enable mineos-gpu-oc.service mineos-gpu-fan.service
     sysctl_safe enable mineos-agent.service mineos-watchdog.service
     # Timer profit-switch sempre abilitato: lo script si auto-gate su rig.conf.
     sysctl_safe enable mineos-profit-switch.timer
@@ -380,6 +396,8 @@ enable_services() {
 
 # Avvia il mining adesso (caso "nessun reboot necessario").
 start_services_now() {
+    sysctl_safe start mineos-gpu-oc.service
+    sysctl_safe start mineos-gpu-fan.service
     sysctl_safe start mineos-agent.service mineos-watchdog.service
     sysctl_safe start mineos-profit-switch.timer
 
@@ -453,6 +471,7 @@ main() {
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
+    setup_gpu_oc_config
 
     write_payout_summary
 
