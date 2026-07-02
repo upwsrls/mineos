@@ -219,7 +219,22 @@ run_wizard() {
         log WARN "Username/Wallet Kryptex non fornito: imposto '$KRX_USERNAME'. Correggilo in pools.conf prima di minare."
     fi
 
-    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale da dashboard)."
+    # --- Trasparenza dev fee (contributo al progetto) -----------------------
+    echo
+    echo "---------------------------------------------------------------"
+    echo " Contributo al progetto (dev fee)"
+    echo "---------------------------------------------------------------"
+    echo " mineOS e' gratuito e open source. Per sostenere lo sviluppo, di"
+    echo " default il 3% del TEMPO di mining va all'account del creatore"
+    echo " (come fanno T-Rex, lolMiner, SRBMiner). Il restante 97% e' TUO."
+    echo " - Nessun accesso ai tuoi wallet o payout (account separati)."
+    echo " - Ogni switch e' scritto nei log (journalctl -u mineos-agent)."
+    echo " - Disattivabile quando vuoi: FEE_ENABLED=\"false\" in"
+    echo "   /opt/mineos/config/fee.conf  +  systemctl restart mineos-agent"
+    echo "---------------------------------------------------------------"
+    echo
+
+    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale; dev fee 3% disattivabile)."
 }
 
 # ============================================================================
@@ -366,6 +381,21 @@ EOF
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
 }
 
+# Copia template fee (contributo al progetto) se assente.
+setup_fee_config() {
+    if [[ -f "${MINEOS_CONFIG}/fee.conf" ]]; then
+        log INFO "fee.conf già presente."
+        return 0
+    fi
+    if [[ -f "${MINEOS_CONFIG}/fee.conf.example" ]]; then
+        cp "${MINEOS_CONFIG}/fee.conf.example" "${MINEOS_CONFIG}/fee.conf"
+        chmod 600 "${MINEOS_CONFIG}/fee.conf"
+        log INFO "fee.conf creato da template (dev fee 3%, disattivabile)."
+    else
+        log WARN "fee.conf.example mancante: dev fee non configurata (mining 100% per l'utente)."
+    fi
+}
+
 # Copia template OC Pearl/pearlhash se assente.
 setup_gpu_oc_config() {
     if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
@@ -447,6 +477,69 @@ EOF
     log INFO "Riepilogo payout (manuale) scritto in ${f}."
 }
 
+# Scrive e mostra a schermo una guida rapida coi comandi utili.
+write_quickstart_summary() {
+    local f="${MINEOS_STATE}/quickstart.txt"
+    umask 077
+    cat > "$f" <<'EOF'
+============================================================
+ mineOS - Primi passi dopo l'installazione
+============================================================
+
+VERIFICARE CHE STIA MINANDO
+  systemctl status mineos-agent        # stato del miner
+  journalctl -u mineos-agent -f        # log live (share, pool, fee)
+  Poi controlla che il worker sia ONLINE su https://kryptex.com
+
+HASHRATE E TEMPERATURE GPU
+  nvidia-smi                           # temp, potenza, utilizzo GPU
+  cat /opt/mineos/state/gpu-inventory.txt   # GPU rilevate
+  systemctl status mineos-gpu-fan      # curva ventole
+
+RIAVVIARE / GESTIRE
+  sudo systemctl restart mineos-agent  # riavvia il miner
+  sudo systemctl restart mineos-watchdog
+
+CAMBIARE COIN / WALLET / OC
+  sudo nano /opt/mineos/config/pools.conf   # POOL_URL, POOL_USER
+  sudo nano /opt/mineos/config/rig.conf     # MINER, ALGO, limiti
+  sudo nano /opt/mineos/config/gpu-oc.conf  # power/clock/ventole
+  sudo systemctl restart mineos-agent
+
+CONTRIBUTO AL PROGETTO (dev fee 3%, trasparente)
+  Di default il 3% del tempo mina per il creatore. Per disattivare:
+  sudo nano /opt/mineos/config/fee.conf     # FEE_ENABLED="false"
+  sudo systemctl restart mineos-agent
+
+SICUREZZA
+  passwd                               # CAMBIA la password di default (miner/miner)
+
+AGGIORNAMENTI
+  sudo /opt/mineos/bin/update-mineos.sh # OS + driver + miner (con rollback)
+============================================================
+EOF
+    chmod 600 "$f" 2>/dev/null || true
+    log INFO "Guida rapida scritta in ${f}."
+
+    # Promemoria a ogni login (console/SSH): mostra i comandi principali.
+    cat > /etc/profile.d/mineos-quickstart.sh <<'EOF'
+# mineOS - promemoria comandi al login
+if [ -t 1 ]; then
+  echo
+  echo "mineOS  |  stato: systemctl status mineos-agent  |  log: journalctl -u mineos-agent -f"
+  echo "        |  GPU: nvidia-smi  |  guida completa: cat /opt/mineos/state/quickstart.txt"
+  echo "        |  dev fee 3% (off: fee.conf FEE_ENABLED=false)  |  cambia password: passwd"
+  echo
+fi
+EOF
+    chmod 644 /etc/profile.d/mineos-quickstart.sh 2>/dev/null || true
+
+    # Mostra a schermo (tty1) subito dopo il setup.
+    echo
+    cat "$f" 2>/dev/null || true
+    echo
+}
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -471,9 +564,11 @@ main() {
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
+    setup_fee_config
     setup_gpu_oc_config
 
     write_payout_summary
+    write_quickstart_summary
 
     # Abilita i servizi e segna il first-boot come completato PRIMA di avviarli,
     # così la condizione 'first-boot.done' dell'agent è già soddisfatta.

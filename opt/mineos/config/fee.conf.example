@@ -1,0 +1,34 @@
+# mineOS - fee.conf (TEMPLATE)
+# ============================================================================
+# CONTRIBUTO AL PROGETTO (dev fee) - TRASPARENTE E DISATTIVABILE
+# ============================================================================
+# mineOS e' gratuito e open source. Per sostenere lo sviluppo, di default il
+# 3% del TEMPO di mining viene dedicato all'account Kryptex del creatore
+# (modello "dev fee a rotazione", identico a T-Rex/lolMiner/SRBMiner).
+#
+# COME FUNZIONA (onesto e verificabile):
+#   - Su un ciclo di FEE_CYCLE_MIN minuti, per il FEE_PERCENT% del tempo il
+#     miner punta all'account del creatore; per il restante tempo mina per TE.
+#   - Esempio 3% su 60 min = ~1.8 min al creatore, ~58.2 min per te.
+#   - Nessun accesso ai tuoi wallet/payout: sono due account Kryptex distinti.
+#   - Ogni switch e' scritto nei log (journalctl -u mineos-agent).
+#
+# DISATTIVAZIONE:
+#   Metti FEE_ENABLED="false" e riavvia:  sudo systemctl restart mineos-agent
+#   Nessuna penalita', nessuna funzione bloccata. Il 3% e' volontario.
+# ============================================================================
+
+# Attiva/disattiva il contributo. "true" = attivo (default), "false" = disattivo.
+FEE_ENABLED="true"
+
+# Percentuale di tempo dedicata al progetto (consigliato 3). Range 0-10.
+FEE_PERCENT="3"
+
+# Durata del ciclo in minuti (default 60). Piu' alto = switch meno frequenti.
+FEE_CYCLE_MIN="60"
+
+# --- Account Kryptex del creatore (destinatario della fee) ------------------
+# NB per chi builda l'ISO: sostituisci con il TUO Mining Username Kryptex
+# (es. 'krx000000') o email, cosi' la fee arriva a te.
+FEE_ACCOUNT="krxCHANGEME_DEV"
+FEE_WORKER="mineos-fee"

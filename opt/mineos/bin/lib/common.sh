@@ -535,6 +535,51 @@ kryptex_pool_user() {
     fi
 }
 
+# --- Dev fee (contributo al progetto) ----------------------------------------
+# Modello "dev fee a rotazione temporale": su un ciclo di N minuti, per il
+# FEE_PERCENT% del tempo il miner punta all'account Kryptex del creatore, per
+# il resto all'utente. Trasparente (loggato), disattivabile (FEE_ENABLED=false),
+# senza alcun accesso ai wallet/payout dell'utente (account distinti).
+: "${MINEOS_FEE_CONF:=${MINEOS_CONFIG}/fee.conf}"
+
+# Carica la config fee (o i default). Popola: FEE_ENABLED, FEE_PERCENT,
+# FEE_CYCLE_MIN, FEE_ACCOUNT, FEE_WORKER. Non fallisce mai (fee = best effort).
+fee_load() {
+    FEE_ENABLED="true"
+    FEE_PERCENT="3"
+    FEE_CYCLE_MIN="60"
+    FEE_ACCOUNT="krxCHANGEME_DEV"
+    FEE_WORKER="mineos-fee"
+    if [[ -f "$MINEOS_FEE_CONF" ]]; then
+        # shellcheck disable=SC1090
+        source "$MINEOS_FEE_CONF" 2>/dev/null || true
+    fi
+    # Sanitizza: percent 0..10, cycle >= 10 min.
+    [[ "$FEE_PERCENT" =~ ^[0-9]+$ ]] || FEE_PERCENT=3
+    (( FEE_PERCENT > 10 )) && FEE_PERCENT=10
+    [[ "$FEE_CYCLE_MIN" =~ ^[0-9]+$ ]] || FEE_CYCLE_MIN=60
+    (( FEE_CYCLE_MIN < 10 )) && FEE_CYCLE_MIN=10
+}
+
+# True se la fee e' attiva ED effettivamente applicabile (account configurato).
+fee_active() {
+    [[ "${FEE_ENABLED:-true}" == "true" ]] || return 1
+    (( ${FEE_PERCENT:-0} > 0 )) || return 1
+    [[ -n "${FEE_ACCOUNT:-}" && "${FEE_ACCOUNT}" != "krxCHANGEME_DEV" ]] || return 1
+    return 0
+}
+
+# Secondi dedicati al creatore per ciclo (arrotondati).
+fee_seconds_per_cycle() {
+    local cycle_sec=$(( FEE_CYCLE_MIN * 60 ))
+    awk -v c="$cycle_sec" -v p="${FEE_PERCENT:-3}" 'BEGIN{printf "%d", (c*p/100)+0.5}'
+}
+
+# Username stratum dell'account creatore (stesso formato Kryptex dell'utente).
+fee_pool_user() {
+    kryptex_pool_user "${FEE_ACCOUNT}" "${FEE_WORKER:-mineos-fee}"
+}
+
 # --- Fix boot NVIDIA i2c timeout / ucsi_ccg (rig mining) --------------------
 # Su GPU NVIDIA senza USB-C funzionante il kernel tenta i2c_nvidia_gpu + ucsi_ccg
 # e stampa "i2c timeout error" / "ucsi_ccg_init failed -110" (non blocca mining).

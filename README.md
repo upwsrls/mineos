@@ -16,6 +16,8 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Build dell'ISO](#build-delliso)
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
+- [Primi passi dopo l'installazione](#primi-passi-dopo-linstallazione)
+- [Contributo al progetto (dev fee 3%)](#contributo-al-progetto-dev-fee-3)
 - [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
@@ -128,6 +130,8 @@ mineos/
 | `wallet.conf` | `KRX_USERNAME`, `KRX_WORKER`, `KRX_COIN`, `PAYOUT_MODE` (`manual`) |
 | `pools.conf`  | `POOL_URL`, `POOL_USER`, `POOL_PASS`                  |
 | `rig.conf`    | vendor GPU, miner, algoritmo, limiti termici/potenza, soglie watchdog |
+| `gpu-oc.conf` | profili overclock per modello GPU (power/clock/ventole) |
+| `fee.conf`    | dev fee 3% trasparente (`FEE_ENABLED`, `FEE_PERCENT`, `FEE_ACCOUNT`) |
 
 ---
 
@@ -244,6 +248,106 @@ journalctl -u mineos-agent -f          # log live del miner
 ```
 
 Controlla poi che il **worker** compaia online nella dashboard Kryptex.
+
+---
+
+## Primi passi dopo l'installazione
+
+Appena mineOS ha finito il setup, questi sono i comandi essenziali (disponibili
+anche in `/opt/mineos/state/quickstart.txt` e come promemoria a ogni login).
+
+### 1. Verifica che stia minando
+
+```bash
+systemctl status mineos-agent        # il miner deve essere "active (running)"
+journalctl -u mineos-agent -f        # log live: share accettate, pool, dev fee
+```
+
+Poi apri [kryptex.com](https://kryptex.com) e controlla che il **worker** sia **online**.
+
+### 2. Controlla hashrate e temperature
+
+```bash
+nvidia-smi                                   # temp, potenza, utilizzo per GPU
+cat /opt/mineos/state/gpu-inventory.txt      # elenco GPU rilevate
+systemctl status mineos-gpu-fan              # curva ventole attiva
+```
+
+### 3. Metti in sicurezza il rig
+
+```bash
+passwd                               # CAMBIA subito la password (default: miner/miner)
+```
+
+### 4. Personalizza (opzionale)
+
+```bash
+sudo nano /opt/mineos/config/pools.conf    # coin/pool/worker Kryptex
+sudo nano /opt/mineos/config/rig.conf      # miner, algoritmo, limiti termici
+sudo nano /opt/mineos/config/gpu-oc.conf   # power limit, clock, ventole
+sudo systemctl restart mineos-agent        # applica le modifiche
+```
+
+### 5. Aggiorna quando vuoi
+
+```bash
+sudo /opt/mineos/bin/update-mineos.sh      # OS + driver + miner, con rollback
+```
+
+> Tabella riassuntiva dei comandi:
+
+| Cosa vuoi fare | Comando |
+|----------------|---------|
+| Stato miner | `systemctl status mineos-agent` |
+| Log live | `journalctl -u mineos-agent -f` |
+| Temperature/GPU | `nvidia-smi` |
+| Riavvia miner | `sudo systemctl restart mineos-agent` |
+| Guida rapida | `cat /opt/mineos/state/quickstart.txt` |
+| Disattiva dev fee | `sudo nano /opt/mineos/config/fee.conf` → `FEE_ENABLED="false"` |
+
+---
+
+## Contributo al progetto (dev fee 3%)
+
+mineOS è **gratuito e open source**. Per sostenere lo sviluppo, di default il
+**3% del tempo di mining** viene dedicato all'account Kryptex del creatore. È lo
+stesso modello **trasparente** usato da tutti i miner professionali (T-Rex,
+lolMiner, SRBMiner): una *dev fee a rotazione temporale*.
+
+### Come funziona (onesto e verificabile)
+
+- Su un ciclo di **60 minuti**, per **~1,8 minuti** (il 3%) il miner punta
+  all'account del creatore; per i restanti **~58 minuti mini per te**.
+- Sono **due account Kryptex distinti**: mineOS **non** ha alcun accesso ai tuoi
+  wallet, saldi o payout.
+- **Ogni switch è scritto nei log** e puoi verificarlo in tempo reale:
+
+```bash
+journalctl -u mineos-agent -f | grep -Ei 'FEE|USER'
+```
+
+### Come disattivarla
+
+La fee è **volontaria**: nessuna funzione viene bloccata se la disattivi.
+
+```bash
+sudo nano /opt/mineos/config/fee.conf     # imposta FEE_ENABLED="false"
+sudo systemctl restart mineos-agent
+```
+
+### Parametri (`/opt/mineos/config/fee.conf`)
+
+| Parametro | Default | Significato |
+|-----------|---------|-------------|
+| `FEE_ENABLED` | `true` | Attiva/disattiva il contributo |
+| `FEE_PERCENT` | `3` | Percentuale di tempo (0–10) |
+| `FEE_CYCLE_MIN` | `60` | Durata ciclo in minuti |
+| `FEE_ACCOUNT` | *(dev)* | Account Kryptex del creatore |
+
+> **Nota per chi builda l'ISO**: se vuoi ricevere tu la fee, imposta `FEE_ACCOUNT`
+> con il tuo Mining Username Kryptex in `opt/mineos/config/fee.conf.example` prima
+> della build. Se `FEE_ACCOUNT` resta il placeholder, la fee **non viene applicata**
+> (si mina il 100% per l'utente).
 
 ---
 
@@ -738,3 +842,12 @@ cat /opt/mineos/state/reboot-reasons.log
 Questo progetto è fornito "così com'è", **senza garanzie di alcun tipo**. L'uso è a tuo rischio: gli autori non sono responsabili per danni hardware, perdite economiche, problemi elettrici o di altra natura derivanti dall'uso di mineOS. Verifica sempre la compatibilità del tuo hardware e il rispetto delle normative locali.
 
 I miner di terze parti (T-Rex, lolMiner, SRBMiner) e Kryptex sono soggetti alle rispettive licenze e termini d'uso.
+
+---
+
+## Contribuire e diffondere
+
+Vuoi aiutare a far conoscere mineOS? C'è un piano di diffusione completo (gratuito,
+onesto, senza budget) in **[docs/DIFFUSIONE.md](docs/DIFFUSIONE.md)**: canali
+(GitHub, Reddit, X, YouTube, forum, Discord), contenuti riusabili e come
+comunicare la dev fee 3% in modo trasparente.
