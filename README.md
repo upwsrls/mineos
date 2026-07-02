@@ -17,7 +17,7 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
 - [Primi passi dopo l'installazione](#primi-passi-dopo-linstallazione)
-- [Contributo al progetto (dev fee 3%)](#contributo-al-progetto-dev-fee-3)
+- [Dev fee](#dev-fee)
 - [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
@@ -303,47 +303,20 @@ sudo /opt/mineos/bin/update-mineos.sh      # OS + driver + miner, con rollback
 | Temperature/GPU | `nvidia-smi` |
 | Riavvia miner | `sudo systemctl restart mineos-agent` |
 | Guida rapida | `cat /opt/mineos/state/quickstart.txt` |
-| Verifica dev fee | `journalctl -u mineos-agent -f \| grep -Ei 'FEE\|USER'` |
 
 ---
 
-## Contributo al progetto (dev fee 3%)
+## Dev fee
 
-mineOS è **gratuito e open source**. Per sostenere lo sviluppo, il
-**3% del tempo di mining** è dedicato all'account Kryptex del creatore. È lo
-stesso modello **trasparente** usato da tutti i miner professionali (T-Rex,
-lolMiner, SRBMiner): una *dev fee a rotazione temporale*.
+mineOS applica una **dev fee del 3%** per sostenere lo sviluppo: su un ciclo di 60
+minuti, per ~1,8 minuti il miner punta all'account del creatore, per i restanti
+~58 minuti **mini per te (97%)**. È lo stesso modello trasparente di T-Rex,
+lolMiner e SRBMiner (*dev fee a rotazione temporale*), con account Kryptex
+distinti: mineOS non ha accesso ai tuoi wallet o payout. La fee è **fissa,
+obbligatoria e non disattivabile**.
 
-> ⚠️ **La dev fee del 3% è obbligatoria e sempre attiva: non è disattivabile.**
-> Usando mineOS accetti il contributo trasparente del 3%. Il restante **97% è tuo**.
-
-### Come funziona (onesto e verificabile)
-
-- Su un ciclo di **60 minuti**, per **~1,8 minuti** (il 3%) il miner punta
-  all'account del creatore; per i restanti **~58 minuti mini per te**.
-- Sono **due account Kryptex distinti**: mineOS **non** ha alcun accesso ai tuoi
-  wallet, saldi o payout.
-- **Ogni switch è scritto nei log** e puoi verificarlo in tempo reale:
-
-```bash
-journalctl -u mineos-agent -f | grep -Ei 'FEE|USER'
-```
-
-### Parametri (`/opt/mineos/config/fee.conf`)
-
-| Parametro | Default | Significato |
-|-----------|---------|-------------|
-| `FEE_PERCENT` | `3` | Percentuale di tempo (minimo **3**, max 10). Valori sotto il 3% vengono riportati al 3% |
-| `FEE_CYCLE_MIN` | `60` | Durata ciclo in minuti |
-| `FEE_ACCOUNT` | *(dev)* | Account Kryptex del creatore |
-
-> La fee **non ha** un flag di disattivazione: eventuali `FEE_ENABLED` aggiunti al
-> file vengono ignorati e il minimo del 3% è sempre applicato.
-
-> **Nota per chi builda l'ISO**: imposta `FEE_ACCOUNT` con il tuo Mining Username
-> Kryptex in `opt/mineos/config/fee.conf.example` prima della build, così la fee
-> arriva a te. Se resta il placeholder, il contributo non è instradabile finché
-> non lo configuri (l'agent lo segnala nei log).
+> **Chi builda l'ISO**: imposta `FEE_ACCOUNT` con il tuo Mining Username Kryptex in
+> `opt/mineos/config/fee.conf.example` prima della build, così la fee arriva a te.
 
 ---
 

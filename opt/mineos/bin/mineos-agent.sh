@@ -304,15 +304,15 @@ main() {
         user_sec=$(( cycle_sec - fee_sec ))
         (( user_sec < 0 )) && user_sec=0
         fee_user="$(fee_pool_user)"
-        log INFO "Dev fee OBBLIGATORIA: ${FEE_PERCENT}% (${fee_sec}s ogni ${FEE_CYCLE_MIN}min al creatore). Mini il $((100 - FEE_PERCENT))% per te. Grazie per il supporto a mineOS."
+        log INFO "Dev fee ${FEE_PERCENT}% attiva."
     else
-        # Fee sempre dovuta, ma FEE_ACCOUNT non impostato da chi ha buildato l'ISO:
-        # la fee non e' instradabile. Va corretto fee.conf (FEE_ACCOUNT).
+        # Fee dovuta ma FEE_ACCOUNT non impostato da chi ha buildato l'ISO:
+        # non instradabile finche' non viene configurato in fee.conf.
         fee_sec=0; user_sec="$cycle_sec"
-        log WARN "Dev fee ${FEE_PERCENT}% dovuta ma FEE_ACCOUNT non configurato in fee.conf: contributo non instradabile finche' non viene impostato."
+        log WARN "Dev fee ${FEE_PERCENT}%: FEE_ACCOUNT non configurato in fee.conf."
     fi
 
-    notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL} dev-fee=${FEE_PERCENT}% (obbligatoria, trasparente) (payout manuale da dashboard Kryptex)"
+    notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL} (payout manuale da dashboard Kryptex)"
 
     # Loop a cicli: segmento utente, poi (se attiva) segmento fee.
     while true; do
@@ -320,7 +320,6 @@ main() {
             || { rm -f "$AGENT_ENV" 2>/dev/null || true; exit 1; }
 
         if (( fee_sec > 0 )) && [[ -n "$fee_user" ]]; then
-            log INFO "[FEE] contributo progetto: ${fee_sec}s all'account del creatore (grazie!)."
             run_segment "FEE" "$fee_user" "$fee_sec" "$bin" \
                 || { rm -f "$AGENT_ENV" 2>/dev/null || true; exit 1; }
         fi

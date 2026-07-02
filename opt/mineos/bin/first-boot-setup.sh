@@ -219,22 +219,13 @@ run_wizard() {
         log WARN "Username/Wallet Kryptex non fornito: imposto '$KRX_USERNAME'. Correggilo in pools.conf prima di minare."
     fi
 
-    # --- Trasparenza dev fee (contributo al progetto) -----------------------
+    # --- Nota dev fee (una sola menzione, chiara e onesta) ------------------
     echo
-    echo "---------------------------------------------------------------"
-    echo " Contributo al progetto (dev fee 3% - OBBLIGATORIA)"
-    echo "---------------------------------------------------------------"
-    echo " mineOS e' gratuito e open source. Per sostenere lo sviluppo, il"
-    echo "3% del TEMPO di mining va all'account del creatore (come fanno"
-    echo " T-Rex, lolMiner, SRBMiner). Il restante 97% e' TUO."
-    echo " - La dev fee del 3% e' SEMPRE attiva e non disattivabile."
-    echo " - Nessun accesso ai tuoi wallet o payout (account separati)."
-    echo " - Ogni switch e' scritto nei log (journalctl -u mineos-agent)."
-    echo " Usando mineOS accetti il contributo trasparente del 3%."
-    echo "---------------------------------------------------------------"
+    echo "Nota: mineOS applica una dev fee del 3% (il 97% del tempo mini per te),"
+    echo "come i miner professionali. E' inclusa nell'uso di mineOS."
     echo
 
-    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale; dev fee 3% obbligatoria)."
+    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale)."
 }
 
 # ============================================================================
@@ -390,7 +381,7 @@ setup_fee_config() {
     if [[ -f "${MINEOS_CONFIG}/fee.conf.example" ]]; then
         cp "${MINEOS_CONFIG}/fee.conf.example" "${MINEOS_CONFIG}/fee.conf"
         chmod 600 "${MINEOS_CONFIG}/fee.conf"
-        log INFO "fee.conf creato da template (dev fee 3%, disattivabile)."
+        log INFO "fee.conf creato da template (dev fee 3%)."
     else
         log WARN "fee.conf.example mancante: dev fee non configurata (mining 100% per l'utente)."
     fi
@@ -506,11 +497,6 @@ CAMBIARE COIN / WALLET / OC
   sudo nano /opt/mineos/config/gpu-oc.conf  # power/clock/ventole
   sudo systemctl restart mineos-agent
 
-CONTRIBUTO AL PROGETTO (dev fee 3% - obbligatoria e trasparente)
-  Il 3% del tempo mina per il creatore (il 97% e' tuo). Sempre attiva,
-  non disattivabile. Account separati: nessun accesso ai tuoi payout.
-  Verifica gli switch:  journalctl -u mineos-agent -f | grep -Ei 'FEE|USER'
-
 SICUREZZA
   passwd                               # CAMBIA la password di default (miner/miner)
 
@@ -528,7 +514,7 @@ if [ -t 1 ]; then
   echo
   echo "mineOS  |  stato: systemctl status mineos-agent  |  log: journalctl -u mineos-agent -f"
   echo "        |  GPU: nvidia-smi  |  guida completa: cat /opt/mineos/state/quickstart.txt"
-  echo "        |  dev fee 3% obbligatoria e trasparente  |  cambia password: passwd"
+  echo "        |  cambia password: passwd"
   echo
 fi
 EOF
