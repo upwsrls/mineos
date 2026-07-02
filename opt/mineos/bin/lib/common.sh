@@ -538,15 +538,17 @@ kryptex_pool_user() {
 # --- Dev fee (contributo al progetto) ----------------------------------------
 # Modello "dev fee a rotazione temporale": su un ciclo di N minuti, per il
 # FEE_PERCENT% del tempo il miner punta all'account Kryptex del creatore, per
-# il resto all'utente. Trasparente (loggato), disattivabile (FEE_ENABLED=false),
-# senza alcun accesso ai wallet/payout dell'utente (account distinti).
+# il resto all'utente. Trasparente (loggato) e OBBLIGATORIA (sempre attiva, non
+# disattivabile). Nessun accesso ai wallet/payout dell'utente (account distinti).
 : "${MINEOS_FEE_CONF:=${MINEOS_CONFIG}/fee.conf}"
 
-# Carica la config fee (o i default). Popola: FEE_ENABLED, FEE_PERCENT,
-# FEE_CYCLE_MIN, FEE_ACCOUNT, FEE_WORKER. Non fallisce mai (fee = best effort).
+# Percentuale minima/di default della dev fee: SEMPRE >= 3% (non disattivabile).
+: "${MINEOS_FEE_MIN_PERCENT:=3}"
+
+# Carica la config fee (o i default). Popola: FEE_PERCENT, FEE_CYCLE_MIN,
+# FEE_ACCOUNT, FEE_WORKER. La fee e' sempre attiva (nessun flag di disattivazione).
 fee_load() {
-    FEE_ENABLED="true"
-    FEE_PERCENT="3"
+    FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
     FEE_CYCLE_MIN="60"
     FEE_ACCOUNT="krxCHANGEME_DEV"
     FEE_WORKER="mineos-fee"
@@ -554,18 +556,21 @@ fee_load() {
         # shellcheck disable=SC1090
         source "$MINEOS_FEE_CONF" 2>/dev/null || true
     fi
-    # Sanitizza: percent 0..10, cycle >= 10 min.
-    [[ "$FEE_PERCENT" =~ ^[0-9]+$ ]] || FEE_PERCENT=3
+    # Sanitizza: percent forzato tra il minimo (3%) e 10%; cycle >= 10 min.
+    # Un eventuale FEE_ENABLED nel file viene ignorato: la fee non e' disattivabile.
+    [[ "$FEE_PERCENT" =~ ^[0-9]+$ ]] || FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
+    (( FEE_PERCENT < MINEOS_FEE_MIN_PERCENT )) && FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
     (( FEE_PERCENT > 10 )) && FEE_PERCENT=10
     [[ "$FEE_CYCLE_MIN" =~ ^[0-9]+$ ]] || FEE_CYCLE_MIN=60
     (( FEE_CYCLE_MIN < 10 )) && FEE_CYCLE_MIN=10
 }
 
-# True se la fee e' attiva ED effettivamente applicabile (account configurato).
+# La dev fee e' SEMPRE attiva. Ritorna 0 (attiva) se l'account destinatario e'
+# configurato; 1 solo se chi ha buildato l'ISO non ha impostato FEE_ACCOUNT
+# (in tal caso la fee non e' fisicamente instradabile: va corretto fee.conf).
 fee_active() {
-    [[ "${FEE_ENABLED:-true}" == "true" ]] || return 1
-    (( ${FEE_PERCENT:-0} > 0 )) || return 1
     [[ -n "${FEE_ACCOUNT:-}" && "${FEE_ACCOUNT}" != "krxCHANGEME_DEV" ]] || return 1
+    (( ${FEE_PERCENT:-0} > 0 )) || return 1
     return 0
 }
 

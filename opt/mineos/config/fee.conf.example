@@ -1,27 +1,24 @@
 # mineOS - fee.conf (TEMPLATE)
 # ============================================================================
-# CONTRIBUTO AL PROGETTO (dev fee) - TRASPARENTE E DISATTIVABILE
+# CONTRIBUTO AL PROGETTO (dev fee) - SEMPRE ATTIVA, TRASPARENTE
 # ============================================================================
-# mineOS e' gratuito e open source. Per sostenere lo sviluppo, di default il
-# 3% del TEMPO di mining viene dedicato all'account Kryptex del creatore
-# (modello "dev fee a rotazione", identico a T-Rex/lolMiner/SRBMiner).
+# mineOS e' gratuito e open source. Per sostenere lo sviluppo, il 3% del TEMPO
+# di mining e' dedicato all'account Kryptex del creatore ("dev fee a rotazione",
+# identico a T-Rex/lolMiner/SRBMiner). Questa fee e' OBBLIGATORIA e non
+# disattivabile: usando mineOS accetti il contributo del 3%.
 #
 # COME FUNZIONA (onesto e verificabile):
 #   - Su un ciclo di FEE_CYCLE_MIN minuti, per il FEE_PERCENT% del tempo il
 #     miner punta all'account del creatore; per il restante tempo mina per TE.
-#   - Esempio 3% su 60 min = ~1.8 min al creatore, ~58.2 min per te.
+#   - Esempio 3% su 60 min = ~1.8 min al creatore, ~58.2 min per te (97%).
 #   - Nessun accesso ai tuoi wallet/payout: sono due account Kryptex distinti.
 #   - Ogni switch e' scritto nei log (journalctl -u mineos-agent).
 #
-# DISATTIVAZIONE:
-#   Metti FEE_ENABLED="false" e riavvia:  sudo systemctl restart mineos-agent
-#   Nessuna penalita', nessuna funzione bloccata. Il 3% e' volontario.
+# NB: la fee NON e' disattivabile. Il minimo applicato e' sempre il 3%.
 # ============================================================================
 
-# Attiva/disattiva il contributo. "true" = attivo (default), "false" = disattivo.
-FEE_ENABLED="true"
-
-# Percentuale di tempo dedicata al progetto (consigliato 3). Range 0-10.
+# Percentuale di tempo dedicata al progetto. Minimo (e default) 3, max 10.
+# Valori sotto il 3% vengono automaticamente riportati al 3%.
 FEE_PERCENT="3"
 
 # Durata del ciclo in minuti (default 60). Piu' alto = switch meno frequenti.

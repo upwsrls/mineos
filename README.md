@@ -131,7 +131,7 @@ mineos/
 | `pools.conf`  | `POOL_URL`, `POOL_USER`, `POOL_PASS`                  |
 | `rig.conf`    | vendor GPU, miner, algoritmo, limiti termici/potenza, soglie watchdog |
 | `gpu-oc.conf` | profili overclock per modello GPU (power/clock/ventole) |
-| `fee.conf`    | dev fee 3% trasparente (`FEE_ENABLED`, `FEE_PERCENT`, `FEE_ACCOUNT`) |
+| `fee.conf`    | dev fee 3% trasparente e obbligatoria (`FEE_PERCENT`, `FEE_ACCOUNT`) |
 
 ---
 
@@ -303,16 +303,19 @@ sudo /opt/mineos/bin/update-mineos.sh      # OS + driver + miner, con rollback
 | Temperature/GPU | `nvidia-smi` |
 | Riavvia miner | `sudo systemctl restart mineos-agent` |
 | Guida rapida | `cat /opt/mineos/state/quickstart.txt` |
-| Disattiva dev fee | `sudo nano /opt/mineos/config/fee.conf` → `FEE_ENABLED="false"` |
+| Verifica dev fee | `journalctl -u mineos-agent -f \| grep -Ei 'FEE\|USER'` |
 
 ---
 
 ## Contributo al progetto (dev fee 3%)
 
-mineOS è **gratuito e open source**. Per sostenere lo sviluppo, di default il
-**3% del tempo di mining** viene dedicato all'account Kryptex del creatore. È lo
+mineOS è **gratuito e open source**. Per sostenere lo sviluppo, il
+**3% del tempo di mining** è dedicato all'account Kryptex del creatore. È lo
 stesso modello **trasparente** usato da tutti i miner professionali (T-Rex,
 lolMiner, SRBMiner): una *dev fee a rotazione temporale*.
+
+> ⚠️ **La dev fee del 3% è obbligatoria e sempre attiva: non è disattivabile.**
+> Usando mineOS accetti il contributo trasparente del 3%. Il restante **97% è tuo**.
 
 ### Come funziona (onesto e verificabile)
 
@@ -326,28 +329,21 @@ lolMiner, SRBMiner): una *dev fee a rotazione temporale*.
 journalctl -u mineos-agent -f | grep -Ei 'FEE|USER'
 ```
 
-### Come disattivarla
-
-La fee è **volontaria**: nessuna funzione viene bloccata se la disattivi.
-
-```bash
-sudo nano /opt/mineos/config/fee.conf     # imposta FEE_ENABLED="false"
-sudo systemctl restart mineos-agent
-```
-
 ### Parametri (`/opt/mineos/config/fee.conf`)
 
 | Parametro | Default | Significato |
 |-----------|---------|-------------|
-| `FEE_ENABLED` | `true` | Attiva/disattiva il contributo |
-| `FEE_PERCENT` | `3` | Percentuale di tempo (0–10) |
+| `FEE_PERCENT` | `3` | Percentuale di tempo (minimo **3**, max 10). Valori sotto il 3% vengono riportati al 3% |
 | `FEE_CYCLE_MIN` | `60` | Durata ciclo in minuti |
 | `FEE_ACCOUNT` | *(dev)* | Account Kryptex del creatore |
 
-> **Nota per chi builda l'ISO**: se vuoi ricevere tu la fee, imposta `FEE_ACCOUNT`
-> con il tuo Mining Username Kryptex in `opt/mineos/config/fee.conf.example` prima
-> della build. Se `FEE_ACCOUNT` resta il placeholder, la fee **non viene applicata**
-> (si mina il 100% per l'utente).
+> La fee **non ha** un flag di disattivazione: eventuali `FEE_ENABLED` aggiunti al
+> file vengono ignorati e il minimo del 3% è sempre applicato.
+
+> **Nota per chi builda l'ISO**: imposta `FEE_ACCOUNT` con il tuo Mining Username
+> Kryptex in `opt/mineos/config/fee.conf.example` prima della build, così la fee
+> arriva a te. Se resta il placeholder, il contributo non è instradabile finché
+> non lo configuri (l'agent lo segnala nei log).
 
 ---
 

@@ -9,7 +9,8 @@ contenuti di qualità e presenza costante nelle community giuste.
 ## 0. Principi (leggere prima di tutto)
 
 1. **Onestà sulla fee.** Dichiara sempre, in chiaro, la dev fee 3% trasparente e
-   disattivabile. È un punto di forza (come T-Rex/lolMiner), non da nascondere.
+   **obbligatoria** (come T-Rex/lolMiner/SRBMiner). È uno standard del settore,
+   non da nascondere: comunicalo apertamente e diventa un segno di serietà.
 2. **Onestà sulla profittabilità.** Il mining GPU è spesso marginale: dillo.
    Costruisci fiducia, non hype.
 3. **Rispetta le regole.** Molte community vietano l'auto-promozione: contribuisci
@@ -113,11 +114,11 @@ Crea una volta, riusa ovunque:
 
 ## 5. Come presentare la dev fee (messaggio pronto)
 
-> **mineOS è gratuito e open source.** Per sostenere lo sviluppo, di default il
-> **3% del tempo** di mining va al creatore (dev fee a rotazione, come T-Rex e
-> lolMiner). Sono account Kryptex separati: mineOS **non** tocca i tuoi wallet o
-> payout, ogni switch è nei log, e puoi **disattivarla** con una riga in
-> `fee.conf`. Il 97%+ è tuo.
+> **mineOS è gratuito e open source.** Per sostenere lo sviluppo, il
+> **3% del tempo** di mining va al creatore (dev fee a rotazione, come T-Rex,
+> lolMiner e SRBMiner). È una fee **fissa del 3%**, standard nel settore. Sono
+> account Kryptex separati: mineOS **non** tocca i tuoi wallet o payout, e ogni
+> switch è verificabile nei log. Il **97% è tuo**.
 
 Questo messaggio, ripetuto ovunque, previene critiche e costruisce fiducia.
 

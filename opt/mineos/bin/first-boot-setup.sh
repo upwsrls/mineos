@@ -222,19 +222,19 @@ run_wizard() {
     # --- Trasparenza dev fee (contributo al progetto) -----------------------
     echo
     echo "---------------------------------------------------------------"
-    echo " Contributo al progetto (dev fee)"
+    echo " Contributo al progetto (dev fee 3% - OBBLIGATORIA)"
     echo "---------------------------------------------------------------"
-    echo " mineOS e' gratuito e open source. Per sostenere lo sviluppo, di"
-    echo " default il 3% del TEMPO di mining va all'account del creatore"
-    echo " (come fanno T-Rex, lolMiner, SRBMiner). Il restante 97% e' TUO."
+    echo " mineOS e' gratuito e open source. Per sostenere lo sviluppo, il"
+    echo "3% del TEMPO di mining va all'account del creatore (come fanno"
+    echo " T-Rex, lolMiner, SRBMiner). Il restante 97% e' TUO."
+    echo " - La dev fee del 3% e' SEMPRE attiva e non disattivabile."
     echo " - Nessun accesso ai tuoi wallet o payout (account separati)."
     echo " - Ogni switch e' scritto nei log (journalctl -u mineos-agent)."
-    echo " - Disattivabile quando vuoi: FEE_ENABLED=\"false\" in"
-    echo "   /opt/mineos/config/fee.conf  +  systemctl restart mineos-agent"
+    echo " Usando mineOS accetti il contributo trasparente del 3%."
     echo "---------------------------------------------------------------"
     echo
 
-    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale; dev fee 3% disattivabile)."
+    log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale; dev fee 3% obbligatoria)."
 }
 
 # ============================================================================
@@ -506,10 +506,10 @@ CAMBIARE COIN / WALLET / OC
   sudo nano /opt/mineos/config/gpu-oc.conf  # power/clock/ventole
   sudo systemctl restart mineos-agent
 
-CONTRIBUTO AL PROGETTO (dev fee 3%, trasparente)
-  Di default il 3% del tempo mina per il creatore. Per disattivare:
-  sudo nano /opt/mineos/config/fee.conf     # FEE_ENABLED="false"
-  sudo systemctl restart mineos-agent
+CONTRIBUTO AL PROGETTO (dev fee 3% - obbligatoria e trasparente)
+  Il 3% del tempo mina per il creatore (il 97% e' tuo). Sempre attiva,
+  non disattivabile. Account separati: nessun accesso ai tuoi payout.
+  Verifica gli switch:  journalctl -u mineos-agent -f | grep -Ei 'FEE|USER'
 
 SICUREZZA
   passwd                               # CAMBIA la password di default (miner/miner)
@@ -528,7 +528,7 @@ if [ -t 1 ]; then
   echo
   echo "mineOS  |  stato: systemctl status mineos-agent  |  log: journalctl -u mineos-agent -f"
   echo "        |  GPU: nvidia-smi  |  guida completa: cat /opt/mineos/state/quickstart.txt"
-  echo "        |  dev fee 3% (off: fee.conf FEE_ENABLED=false)  |  cambia password: passwd"
+  echo "        |  dev fee 3% obbligatoria e trasparente  |  cambia password: passwd"
   echo
 fi
 EOF
