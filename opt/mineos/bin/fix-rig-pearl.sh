@@ -194,12 +194,6 @@ EOF
 }
 
 ensure_optional_configs() {
-    # fee.conf: crea da template se assente (dev fee 3% trasparente/disattivabile).
-    if [[ ! -f "${MINEOS_CONFIG}/fee.conf" && -f "${MINEOS_CONFIG}/fee.conf.example" ]]; then
-        cp "${MINEOS_CONFIG}/fee.conf.example" "${MINEOS_CONFIG}/fee.conf"
-        chmod 600 "${MINEOS_CONFIG}/fee.conf"
-        log INFO "fee.conf creato da template."
-    fi
     # gpu-oc.conf: crea da template se assente.
     if [[ ! -f "${MINEOS_CONFIG}/gpu-oc.conf" && -f "${MINEOS_CONFIG}/gpu-oc.conf.example" ]]; then
         cp "${MINEOS_CONFIG}/gpu-oc.conf.example" "${MINEOS_CONFIG}/gpu-oc.conf"

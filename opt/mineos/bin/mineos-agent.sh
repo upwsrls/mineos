@@ -152,9 +152,6 @@ find_miner_binary() {
 # Costruzione argomenti per miner + scrittura agent.env per il watchdog
 # ----------------------------------------------------------------------------
 build_args() {
-    # Utente stratum per questo segmento (default: utente reale; per la dev fee
-    # viene passato l'account del creatore). Vedi rotazione in main().
-    local seg_user="${1:-$POOL_USER}"
     local hostport; hostport="$(pool_hostport)"
     case "$MINER" in
         trex)
@@ -162,7 +159,7 @@ build_args() {
             MINER_ARGS=(
                 -a "$ALGO"
                 -o "$POOL_URL"
-                -u "$seg_user"
+                -u "$POOL_USER"
                 -p "$POOL_PASS"
                 --api-bind-http "127.0.0.1:${API_PORT}"
                 # Riavvio interno disattivato: la gestione restart la fa systemd/watchdog.
@@ -174,7 +171,7 @@ build_args() {
             MINER_ARGS=(
                 --algo "$ALGO"
                 --pool "$hostport"
-                --user "$seg_user"
+                --user "$POOL_USER"
                 --pass "$POOL_PASS"
                 --apiport "$API_PORT"
             )
@@ -186,7 +183,7 @@ build_args() {
             MINER_ARGS=(
                 --algorithm "$ALGO"
                 --pool "$hostport"
-                --wallet "$seg_user"
+                --wallet "$POOL_USER"
                 --password "$POOL_PASS"
                 --disable-cpu
                 --api-enable
@@ -232,45 +229,6 @@ graceful_stop() {
 }
 
 # ----------------------------------------------------------------------------
-# Esecuzione di un SEGMENTO di mining (durata limitata, interrompibile).
-# Lancia il miner con l'utente stratum dato e resta attivo per <seconds>.
-# Ritorna:
-#   0   segmento completato regolarmente (tempo scaduto)
-#   1   il miner è uscito da solo prima dello scadere (errore) -> restart
-# I segnali SIGTERM/SIGINT sono gestiti dal trap graceful_stop (esce subito).
-# ----------------------------------------------------------------------------
-run_segment() {
-    local label="$1" seg_user="$2" seconds="$3" bin="$4"
-    build_args "$seg_user"
-
-    "$bin" "${MINER_ARGS[@]}" &
-    MINER_PID=$!
-    log INFO "[$label] miner avviato pid=$MINER_PID user=${seg_user} per ${seconds}s."
-
-    # Attesa a piccoli passi: reattiva ai segnali e rileva crash del miner.
-    local elapsed=0 step=5
-    while (( elapsed < seconds )); do
-        if ! kill -0 "$MINER_PID" 2>/dev/null; then
-            wait "$MINER_PID" 2>/dev/null; local rc=$?
-            log WARN "[$label] miner uscito (rc=$rc) dopo ${elapsed}s. systemd/riavvio gestiranno."
-            return 1
-        fi
-        sleep "$step"
-        elapsed=$(( elapsed + step ))
-    done
-
-    # Fine segmento: chiusura pulita del miner prima del prossimo.
-    if kill -0 "$MINER_PID" 2>/dev/null; then
-        kill -INT "$MINER_PID" 2>/dev/null || true
-        local w=0
-        while (( w < 30 )) && kill -0 "$MINER_PID" 2>/dev/null; do sleep 1; w=$(( w + 1 )); done
-        kill -0 "$MINER_PID" 2>/dev/null && kill -KILL "$MINER_PID" 2>/dev/null || true
-    fi
-    wait "$MINER_PID" 2>/dev/null || true
-    return 0
-}
-
-# ----------------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------------
 main() {
@@ -281,11 +239,10 @@ main() {
     mkdir -p "${MINEOS_STATE}" "${MINEOS_LOGS}" 2>/dev/null || true
     load_all_conf
     apply_tuning
+    build_args
 
     local bin; bin="$(find_miner_binary)"
-
-    # Costruisce gli args per l'utente reale (pubblica agent.env per il watchdog).
-    build_args "$POOL_USER"
+    log INFO "Avvio miner: $bin ${MINER_ARGS[*]}"
 
     # Intercetta i segnali di systemd per il graceful shutdown.
     trap graceful_stop SIGTERM SIGINT
@@ -295,35 +252,19 @@ main() {
         exit 0
     fi
 
-    # --- Dev fee (contributo al progetto): rotazione temporale trasparente ---
-    fee_load
-    local cycle_sec fee_sec user_sec fee_user=""
-    cycle_sec=$(( FEE_CYCLE_MIN * 60 ))
-    if fee_active; then
-        fee_sec="$(fee_seconds_per_cycle)"
-        user_sec=$(( cycle_sec - fee_sec ))
-        (( user_sec < 0 )) && user_sec=0
-        fee_user="$(fee_pool_user)"
-        log INFO "Dev fee ${FEE_PERCENT}% attiva."
-    else
-        # Fee dovuta ma FEE_ACCOUNT non impostato da chi ha buildato l'ISO:
-        # non instradabile finche' non viene configurato in fee.conf.
-        fee_sec=0; user_sec="$cycle_sec"
-        log WARN "Dev fee ${FEE_PERCENT}%: FEE_ACCOUNT non configurato in fee.conf."
-    fi
-
+    # Lancia il miner in background e attendi: così il trap può agire mentre
+    # il processo gira (con 'exec' i trap non verrebbero eseguiti).
+    "$bin" "${MINER_ARGS[@]}" &
+    MINER_PID=$!
+    log INFO "Miner avviato con pid=$MINER_PID."
     notify MINING_START "Mining avviato: miner=${MINER} algo=${ALGO} pool=${POOL_URL} (payout manuale da dashboard Kryptex)"
 
-    # Loop a cicli: segmento utente, poi (se attiva) segmento fee.
-    while true; do
-        run_segment "USER" "$POOL_USER" "$user_sec" "$bin" \
-            || { rm -f "$AGENT_ENV" 2>/dev/null || true; exit 1; }
-
-        if (( fee_sec > 0 )) && [[ -n "$fee_user" ]]; then
-            run_segment "FEE" "$fee_user" "$fee_sec" "$bin" \
-                || { rm -f "$AGENT_ENV" 2>/dev/null || true; exit 1; }
-        fi
-    done
+    # 'wait' ritorna quando il miner esce o quando arriva un segnale.
+    wait "$MINER_PID"
+    local rc=$?
+    log WARN "Miner uscito con codice $rc. systemd applicherà la policy di restart."
+    rm -f "$AGENT_ENV" 2>/dev/null || true
+    exit "$rc"
 }
 
 main "$@"

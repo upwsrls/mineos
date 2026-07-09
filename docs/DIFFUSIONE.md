@@ -1,16 +1,16 @@
 # mineOS – Piano di diffusione (senza budget)
 
 Guida pratica per far conoscere mineOS al mondo in modo **professionale e
-onesto**, incluso come comunicare la **dev fee 3%**. Zero spesa: solo tempo,
-contenuti di qualità e presenza costante nelle community giuste.
+onesto**. Zero spesa: solo tempo, contenuti di qualità e presenza costante nelle
+community giuste.
 
 ---
 
 ## 0. Principi (leggere prima di tutto)
 
-1. **Onestà sulla fee.** Dichiara sempre, in chiaro, la dev fee 3% trasparente e
-   **obbligatoria** (come T-Rex/lolMiner/SRBMiner). È uno standard del settore,
-   non da nascondere: comunicalo apertamente e diventa un segno di serietà.
+1. **Nessuna fee, dillo chiaramente.** mineOS non applica costi né dev fee: l'utente
+   mina il 100% per sé. È un punto di forza: comunicalo apertamente (ricorda solo
+   che i miner di terze parti come SRBMiner hanno una loro devfee nativa).
 2. **Onestà sulla profittabilità.** Il mining GPU è spesso marginale: dillo.
    Costruisci fiducia, non hype.
 3. **Rispetta le regole.** Molte community vietano l'auto-promozione: contribuisci
@@ -32,10 +32,9 @@ Prima di promuovere, il repo deve essere impeccabile:
       `kryptex`, `ubuntu`, `linux`, `pearl`.
 - [ ] **CONTRIBUTING.md** + template issue/PR (abbassa la barriera ai contributi).
 - [ ] **Sezione Security** con avvisi elettrici e cambio password.
-- [ ] **Dev fee** documentata in una sezione dedicata (già presente).
 
-> Obiettivo: chi arriva capisce in 60 secondi cos'è, come si usa, quanto costa
-> (fee 3%), e come disattivarla.
+> Obiettivo: chi arriva capisce in 60 secondi cos'è, come si usa e che è
+> **gratuito, senza fee** (mini il 100% per te).
 
 ---
 
@@ -52,7 +51,7 @@ Subreddit rilevanti: `r/gpumining`, `r/MoneroMining` (per approccio), `r/linux`
 - **Non** postare solo il link. Scrivi un post-guida: problema → soluzione →
   come provarlo → limiti onesti → link.
 - Titolo esempio: *"Ho creato un OS Linux che trasforma un rig NVIDIA in un miner
-  Kryptex/Pearl headless (open source, dev fee 3% disattivabile)"*.
+  Kryptex/Pearl headless (open source, gratuito, senza fee)"*.
 - Partecipa ai commenti per giorni, non "posta e sparisci".
 
 ### Twitter/X (annunci + community mining)
@@ -64,7 +63,7 @@ Subreddit rilevanti: `r/gpumining`, `r/MoneroMining` (per approccio), `r/linux`
 ### YouTube (conversione alta)
 - Un video da 5–10 min: *"Da USB a rig che mina in 10 minuti con mineOS"*.
   Flash → boot → wizard → worker online su Kryptex.
-- Mostra **onestamente** la fee 3% e come disattivarla.
+- Ricorda che mineOS è **gratuito e senza fee** (mini il 100% per te).
 - Metti i comandi in descrizione + link al repo. Anche un solo video ben fatto
   porta traffico costante nel tempo.
 
@@ -112,15 +111,13 @@ Crea una volta, riusa ovunque:
 
 ---
 
-## 5. Come presentare la dev fee (messaggio pronto)
+## 5. Come presentare il progetto (messaggio pronto)
 
-> **mineOS è gratuito e open source.** Per sostenere lo sviluppo, il
-> **3% del tempo** di mining va al creatore (dev fee a rotazione, come T-Rex,
-> lolMiner e SRBMiner). È una fee **fissa del 3%**, standard nel settore. Sono
-> account Kryptex separati: mineOS **non** tocca i tuoi wallet o payout, e ogni
-> switch è verificabile nei log. Il **97% è tuo**.
+> **mineOS è gratuito e open source, senza alcuna fee.** Trasforma un rig NVIDIA/AMD
+> in un miner Kryptex/Pearl headless e stabile: **mini il 100% per te**. (I miner di
+> terze parti, es. SRBMiner, hanno una loro devfee nativa indipendente da mineOS.)
 
-Questo messaggio, ripetuto ovunque, previene critiche e costruisce fiducia.
+Questo messaggio, ripetuto ovunque, costruisce fiducia.
 
 ---
 
@@ -142,7 +139,7 @@ Usa i numeri per capire quali canali rendono e raddoppia lì.
 - [ ] Post-guida su r/gpumining + thread bitcointalk
 - [ ] Thread "build in public" su X
 - [ ] Presenza attiva in 1–2 Discord di mining
-- [ ] Messaggio fee 3% onesto e coerente ovunque
+- [ ] Messaggio "gratuito, senza fee" coerente ovunque
 - [ ] Cadenza costante: release + contenuti
 
 > **Regola d'oro:** dai valore prima di chiedere attenzione. Contenuti utili +

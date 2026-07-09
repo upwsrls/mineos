@@ -535,56 +535,6 @@ kryptex_pool_user() {
     fi
 }
 
-# --- Dev fee (contributo al progetto) ----------------------------------------
-# Modello "dev fee a rotazione temporale": su un ciclo di N minuti, per il
-# FEE_PERCENT% del tempo il miner punta all'account Kryptex del creatore, per
-# il resto all'utente. Trasparente (loggato) e OBBLIGATORIA (sempre attiva, non
-# disattivabile). Nessun accesso ai wallet/payout dell'utente (account distinti).
-: "${MINEOS_FEE_CONF:=${MINEOS_CONFIG}/fee.conf}"
-
-# Percentuale minima/di default della dev fee: SEMPRE >= 3% (non disattivabile).
-: "${MINEOS_FEE_MIN_PERCENT:=3}"
-
-# Carica la config fee (o i default). Popola: FEE_PERCENT, FEE_CYCLE_MIN,
-# FEE_ACCOUNT, FEE_WORKER. La fee e' sempre attiva (nessun flag di disattivazione).
-fee_load() {
-    FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
-    FEE_CYCLE_MIN="60"
-    FEE_ACCOUNT="krxCHANGEME_DEV"
-    FEE_WORKER="mineos-fee"
-    if [[ -f "$MINEOS_FEE_CONF" ]]; then
-        # shellcheck disable=SC1090
-        source "$MINEOS_FEE_CONF" 2>/dev/null || true
-    fi
-    # Sanitizza: percent forzato tra il minimo (3%) e 10%; cycle >= 10 min.
-    # Un eventuale FEE_ENABLED nel file viene ignorato: la fee non e' disattivabile.
-    [[ "$FEE_PERCENT" =~ ^[0-9]+$ ]] || FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
-    (( FEE_PERCENT < MINEOS_FEE_MIN_PERCENT )) && FEE_PERCENT="$MINEOS_FEE_MIN_PERCENT"
-    (( FEE_PERCENT > 10 )) && FEE_PERCENT=10
-    [[ "$FEE_CYCLE_MIN" =~ ^[0-9]+$ ]] || FEE_CYCLE_MIN=60
-    (( FEE_CYCLE_MIN < 10 )) && FEE_CYCLE_MIN=10
-}
-
-# La dev fee e' SEMPRE attiva. Ritorna 0 (attiva) se l'account destinatario e'
-# configurato; 1 solo se chi ha buildato l'ISO non ha impostato FEE_ACCOUNT
-# (in tal caso la fee non e' fisicamente instradabile: va corretto fee.conf).
-fee_active() {
-    [[ -n "${FEE_ACCOUNT:-}" && "${FEE_ACCOUNT}" != "krxCHANGEME_DEV" ]] || return 1
-    (( ${FEE_PERCENT:-0} > 0 )) || return 1
-    return 0
-}
-
-# Secondi dedicati al creatore per ciclo (arrotondati).
-fee_seconds_per_cycle() {
-    local cycle_sec=$(( FEE_CYCLE_MIN * 60 ))
-    awk -v c="$cycle_sec" -v p="${FEE_PERCENT:-3}" 'BEGIN{printf "%d", (c*p/100)+0.5}'
-}
-
-# Username stratum dell'account creatore (stesso formato Kryptex dell'utente).
-fee_pool_user() {
-    kryptex_pool_user "${FEE_ACCOUNT}" "${FEE_WORKER:-mineos-fee}"
-}
-
 # --- Fix boot NVIDIA i2c timeout / ucsi_ccg (rig mining) --------------------
 # Su GPU NVIDIA senza USB-C funzionante il kernel tenta i2c_nvidia_gpu + ucsi_ccg
 # e stampa "i2c timeout error" / "ucsi_ccg_init failed -110" (non blocca mining).

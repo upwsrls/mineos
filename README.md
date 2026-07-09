@@ -17,7 +17,6 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
 - [Primi passi dopo l'installazione](#primi-passi-dopo-linstallazione)
-- [Dev fee](#dev-fee)
 - [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
@@ -131,7 +130,6 @@ mineos/
 | `pools.conf`  | `POOL_URL`, `POOL_USER`, `POOL_PASS`                  |
 | `rig.conf`    | vendor GPU, miner, algoritmo, limiti termici/potenza, soglie watchdog |
 | `gpu-oc.conf` | profili overclock per modello GPU (power/clock/ventole) |
-| `fee.conf`    | dev fee 3% trasparente e obbligatoria (`FEE_PERCENT`, `FEE_ACCOUNT`) |
 
 ---
 
@@ -260,7 +258,7 @@ anche in `/opt/mineos/state/quickstart.txt` e come promemoria a ogni login).
 
 ```bash
 systemctl status mineos-agent        # il miner deve essere "active (running)"
-journalctl -u mineos-agent -f        # log live: share accettate, pool, dev fee
+journalctl -u mineos-agent -f        # log live: share accettate, pool
 ```
 
 Poi apri [kryptex.com](https://kryptex.com) e controlla che il **worker** sia **online**.
@@ -304,19 +302,9 @@ sudo /opt/mineos/bin/update-mineos.sh      # OS + driver + miner, con rollback
 | Riavvia miner | `sudo systemctl restart mineos-agent` |
 | Guida rapida | `cat /opt/mineos/state/quickstart.txt` |
 
----
-
-## Dev fee
-
-mineOS applica una **dev fee del 3%** per sostenere lo sviluppo: su un ciclo di 60
-minuti, per ~1,8 minuti il miner punta all'account del creatore, per i restanti
-~58 minuti **mini per te (97%)**. È lo stesso modello trasparente di T-Rex,
-lolMiner e SRBMiner (*dev fee a rotazione temporale*), con account Kryptex
-distinti: mineOS non ha accesso ai tuoi wallet o payout. La fee è **fissa,
-obbligatoria e non disattivabile**.
-
-> **Chi builda l'ISO**: imposta `FEE_ACCOUNT` con il tuo Mining Username Kryptex in
-> `opt/mineos/config/fee.conf.example` prima della build, così la fee arriva a te.
+> **Nessuna fee.** mineOS non applica alcun costo né dev fee: **mini il 100% per te**.
+> Gli unici prelievi eventuali sono quelli dei miner di terze parti secondo le loro
+> licenze (es. SRBMiner ha una propria devfee nativa, indipendente da mineOS).
 
 ---
 
@@ -873,4 +861,4 @@ I miner di terze parti (T-Rex, lolMiner, SRBMiner) e Kryptex sono soggetti alle 
 Vuoi aiutare a far conoscere mineOS? C'è un piano di diffusione completo (gratuito,
 onesto, senza budget) in **[docs/DIFFUSIONE.md](docs/DIFFUSIONE.md)**: canali
 (GitHub, Reddit, X, YouTube, forum, Discord), contenuti riusabili e come
-comunicare la dev fee 3% in modo trasparente.
+presentare il progetto in modo professionale (gratuito, senza fee).

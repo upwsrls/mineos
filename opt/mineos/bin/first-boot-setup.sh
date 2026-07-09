@@ -219,12 +219,6 @@ run_wizard() {
         log WARN "Username/Wallet Kryptex non fornito: imposto '$KRX_USERNAME'. Correggilo in pools.conf prima di minare."
     fi
 
-    # --- Nota dev fee (una sola menzione, chiara e onesta) ------------------
-    echo
-    echo "Nota: mineOS applica una dev fee del 3% (il 97% del tempo mini per te),"
-    echo "come i miner professionali. E' inclusa nell'uso di mineOS."
-    echo
-
     log INFO "Wizard completato: rig=$RIG_NAME worker=$KRX_WORKER coin=$KRX_COIN (payout manuale)."
 }
 
@@ -372,21 +366,6 @@ EOF
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
 }
 
-# Copia template fee (contributo al progetto) se assente.
-setup_fee_config() {
-    if [[ -f "${MINEOS_CONFIG}/fee.conf" ]]; then
-        log INFO "fee.conf già presente."
-        return 0
-    fi
-    if [[ -f "${MINEOS_CONFIG}/fee.conf.example" ]]; then
-        cp "${MINEOS_CONFIG}/fee.conf.example" "${MINEOS_CONFIG}/fee.conf"
-        chmod 600 "${MINEOS_CONFIG}/fee.conf"
-        log INFO "fee.conf creato da template (dev fee 3%)."
-    else
-        log WARN "fee.conf.example mancante: dev fee non configurata (mining 100% per l'utente)."
-    fi
-}
-
 # Copia template OC Pearl/pearlhash se assente.
 setup_gpu_oc_config() {
     if [[ -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
@@ -479,7 +458,7 @@ write_quickstart_summary() {
 
 VERIFICARE CHE STIA MINANDO
   systemctl status mineos-agent        # stato del miner
-  journalctl -u mineos-agent -f        # log live (share, pool, fee)
+  journalctl -u mineos-agent -f        # log live (share, pool)
   Poi controlla che il worker sia ONLINE su https://kryptex.com
 
 HASHRATE E TEMPERATURE GPU
@@ -550,7 +529,6 @@ main() {
     run_wizard
     install_miners "$vendor"
     write_configs "$vendor"
-    setup_fee_config
     setup_gpu_oc_config
 
     write_payout_summary
