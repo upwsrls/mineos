@@ -17,7 +17,9 @@ DIST_DIR         := dist
 AUTOINSTALL_DIR  := $(BUILD_DIR)/autoinstall
 
 PAYLOAD          := $(DIST_DIR)/$(PROJECT_NAME)-payload.tar.gz
+# ISO prodotta da build-iso.sh (nome versionato) e nome finale richiesto.
 OUT_ISO          := $(BUILD_DIR)/$(PROJECT_NAME)-$(UBUNTU_VERSION)-autoinstall-amd64.iso
+FINAL_ISO        := $(BUILD_DIR)/mineOS.iso
 UBUNTU_ISO_PATH  := $(WORK_DIR)/$(UBUNTU_ISO_NAME)
 
 # Destinazione per l'installazione locale (utile per test/staging).
@@ -61,14 +63,16 @@ payload: ## Crea il tar.gz di mineOS da iniettare nell'ISO
 	@printf "Payload pronto: $(CYAN)$(PAYLOAD)$(RESET)\n"
 
 # ---------------------------------------------------------------------------
-iso: ## Builda l'ISO completa (scarica l'ISO Ubuntu se assente)
+iso: ## Builda l'ISO completa e la salva come build/mineOS.iso
 	@if [ -f "$(UBUNTU_ISO_PATH)" ]; then \
 		printf "ISO Ubuntu trovata: $(UBUNTU_ISO_PATH)\n"; \
 	else \
 		printf "$(BOLD)ISO Ubuntu assente: verra' scaricata da build-iso.sh$(RESET)\n"; \
 	fi
 	cd $(BUILD_DIR) && ./build-iso.sh
-	@printf "ISO generata: $(CYAN)$(OUT_ISO)$(RESET)\n"
+	@cp -f "$(OUT_ISO)" "$(FINAL_ISO)"
+	@printf "ISO generata: $(CYAN)$(FINAL_ISO)$(RESET)\n"
+	@printf "Flash con: sudo dd if='$(FINAL_ISO)' of=/dev/sdX bs=4M status=progress oflag=sync\n"
 
 # ---------------------------------------------------------------------------
 rebuild: ## Ricostruisce l'ISO da zero (clean temporanei + payload + iso)
@@ -85,7 +89,7 @@ clean: ## Pulisce file temporanei (work/, dist/, payload)
 
 # ---------------------------------------------------------------------------
 clean-all: clean ## Pulizia totale, inclusi ISO generata e ISO Ubuntu scaricata
-	rm -f $(OUT_ISO)
+	rm -f $(OUT_ISO) $(FINAL_ISO)
 	@printf "Rimossa anche l'ISO generata.\n"
 
 # ---------------------------------------------------------------------------
