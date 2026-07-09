@@ -667,6 +667,60 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 ### L'installer si ferma o chiede conferme
 - Significa che il seed autoinstall non è stato letto. Verifica di aver buildato con `build-iso.sh` (che aggiunge `autoinstall ds=nocloud;s=/cdrom/server/` a GRUB) e non di aver flashato l'ISO Ubuntu vergine.
 
+### Autoinstall va in crash con "disk full" / errore di partizionamento
+Succede tipicamente su **rig già usati** (partizioni/LVM/RAID residui) o con **più
+dischi** (l'installer sceglie il disco sbagliato o riusa una partizione piccola).
+
+- **Risolto** nelle ISO recenti: l'autoinstall ora
+  1. **azzera** firme e tabella partizioni del disco interno più grande *prima*
+     di installare (`early-commands`, escludendo l'USB di boot);
+  2. usa un **partizionamento esplicito** che riempie tutto il disco
+     (`match: {size: largest}`, `wipe: superblock-recursive`, root `ext4` su tutto
+     lo spazio, niente swapfile) invece di `layout: direct`.
+
+- **Rebuild dell'ISO** con il fix:
+
+```bash
+make rebuild        # rigenera build/mineos-24.04.3-autoinstall-amd64.iso
+```
+
+#### Reinstallazione pulita (procedura consigliata)
+
+1. **Scollega ogni disco/USB non necessario** dal rig: lascia collegati solo
+   l'USB di installazione e il disco su cui vuoi installare. Evita ambiguità.
+2. **(Opzionale ma consigliato) Azzera a mano il disco di destinazione** se in
+   passato hai avuto crash. Avvia in modalità *Try/Shell* o da una live Ubuntu,
+   identifica il disco (NON l'USB!) e puliscilo:
+
+```bash
+lsblk -do NAME,SIZE,MODEL,TRAN      # individua il disco interno (es. /dev/sda, tran=sata/nvme)
+DISK=/dev/sdX                       # <-- il DISCO interno, non l'USB!
+sudo swapoff -a || true
+sudo vgchange -an || true           # disattiva LVM residui
+sudo mdadm --stop --scan || true    # ferma RAID residui
+sudo wipefs -a "$DISK"              # rimuove firme filesystem/partizioni
+sudo sgdisk --zap-all "$DISK"       # azzera GPT/MBR
+sudo dd if=/dev/zero of="$DISK" bs=1M count=32 oflag=direct   # header residui
+sync
+```
+
+3. **Riflasha l'USB** con l'ISO ricostruita e reinstalla:
+
+```bash
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sync
+```
+
+> ⚠️ **`dd` e `wipefs`/`sgdisk` sono distruttivi**: controlla due volte di aver
+> scelto il disco giusto. Cancellano tutto sul device indicato.
+
+4. Dopo l'installazione e il reboot, verifica lo spazio del disco:
+
+```bash
+df -h /                            # la root deve occupare (quasi) tutto il disco
+lsblk                              # controlla che root sia sul disco interno
+```
+
 ### `nvidia-gpu i2c timeout` / `ucsi_ccg init failed -110` al boot
 - **Causa**: GPU NVIDIA da mining con funzione USB-C (.3) senza controller I2C reale. Il kernel prova `i2c_nvidia_gpu` + `ucsi_ccg` e fallisce con timeout. **Non blocca** CUDA/mining, ma sporca `tty1`.
 - **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot (modprobe + initramfs + GRUB).
