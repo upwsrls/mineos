@@ -23,9 +23,14 @@ Type=simple
 # cwd scrivibile: con ProtectSystem=strict la '/' è read-only e alcuni miner
 # scrivono file di log/temp nella cartella corrente (uscirebbero con errore).
 WorkingDirectory=/opt/mineos/state
+# Garantisce l'esistenza della cartella log/stato PRIMA dell'avvio (l'agent vi
+# scrive; con ProtectSystem=strict la '/' e' read-only ma /opt/mineos/logs e'
+# in ReadWritePaths). Idempotente; il prefisso '-' rende i passi non fatali.
+ExecStartPre=-/bin/mkdir -p /opt/mineos/logs /opt/mineos/state
+ExecStartPre=-/bin/chown miner:miner /opt/mineos/logs
+ExecStartPre=-/bin/chmod 0755 /opt/mineos/logs
 # Al primo avvio dopo un reboot pianificato (driver/kernel nuovi) rimuoviamo il
 # flag: il riavvio e' avvenuto, quindi non deve piu' frenare nulla.
-# Il prefisso '-' rende il passo non fatale se il flag non esiste.
 ExecStartPre=-/bin/rm -f /opt/mineos/state/reboot-required
 # Il miner gira in foreground; questo wrapper fa "exec" del binario scelto.
 ExecStart=/bin/bash /opt/mineos/bin/mineos-agent.sh

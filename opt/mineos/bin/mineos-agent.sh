@@ -22,6 +22,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
+# La cartella log DEVE esistere: mineos-agent scrive qui (idempotente allo startup,
+# oltre alla creazione nel payload/tarball e all'ExecStartPre della unit).
+mkdir -p "${MINEOS_LOGS}" "${MINEOS_STATE}" 2>/dev/null || true
+chown miner:miner "${MINEOS_LOGS}" 2>/dev/null || true
+chmod 0755 "${MINEOS_LOGS}" 2>/dev/null || true
+
 # Porte API locali (una per miner; sempre bind su loopback).
 API_PORT_TREX=4067
 API_PORT_LOL=4068

@@ -69,7 +69,7 @@ iso: ## Builda l'ISO completa e la salva come build/mineOS.iso
 	else \
 		printf "$(BOLD)ISO Ubuntu assente: verra' scaricata da build-iso.sh$(RESET)\n"; \
 	fi
-	cd $(BUILD_DIR) && ./build-iso.sh
+	cd $(BUILD_DIR) && UBUNTU_VERSION=$(UBUNTU_VERSION) ./build-iso.sh
 	@cp -f "$(OUT_ISO)" "$(FINAL_ISO)"
 	@printf "ISO generata: $(CYAN)$(FINAL_ISO)$(RESET)\n"
 	@printf "Flash con: sudo dd if='$(FINAL_ISO)' of=/dev/sdX bs=4M status=progress oflag=sync\n"

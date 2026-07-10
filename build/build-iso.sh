@@ -21,7 +21,10 @@
 set -Eeuo pipefail
 
 # --- Parametri --------------------------------------------------------------
-UBUNTU_VERSION="24.04.3"
+# UBUNTU_VERSION e' una VARIABILE UNICA: usata sia per l'URL di download sia per
+# il nome dell'ISO di output. Override-abile da env (il Makefile la passa qui),
+# cosi' non ci sono piu' versioni hardcoded disallineate.
+UBUNTU_VERSION="${UBUNTU_VERSION:-24.04.3}"
 UBUNTU_ISO_NAME="ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
 UBUNTU_ISO_URL="https://releases.ubuntu.com/24.04/${UBUNTU_ISO_NAME}"
 

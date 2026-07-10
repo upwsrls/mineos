@@ -87,46 +87,136 @@ ensure_base_tools() {
 # ============================================================================
 # STEP 1 - Driver GPU
 # ============================================================================
+# Log dedicato all'installazione driver (richiesto: /opt/mineos/logs/driver-install.log)
+DRIVER_LOG="${MINEOS_LOGS}/driver-install.log"
+
+# Logga sia sul log generale sia sul log driver dedicato.
+dlog() {
+    mkdir -p "${MINEOS_LOGS}" 2>/dev/null || true
+    printf '%s %s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$*" >> "${DRIVER_LOG}" 2>/dev/null || true
+    log INFO "$*"
+}
+
+# Branch NVIDIA raccomandato (es. '595') da ubuntu-drivers. Vuoto se non rilevato.
+nvidia_branch_recommended() {
+    ubuntu-drivers devices 2>/dev/null \
+        | grep -oE 'nvidia-driver-[0-9]+' \
+        | sed 's/nvidia-driver-//' \
+        | sort -n | tail -1
+}
+
+# Il modulo DKMS nvidia risulta 'installed' (non solo 'built')?
+nvidia_dkms_installed() {
+    command -v dkms >/dev/null 2>&1 || return 1
+    dkms status 2>/dev/null | grep -Ei 'nvidia' | grep -qi 'installed'
+}
+
+# dpkg: pacchetto installato (stato 'ii')?
+pkg_installed() {
+    dpkg -l "$1" 2>/dev/null | grep -q '^ii'
+}
+
+# Evita che restino installati SIA il modulo closed SIA quello open dello stesso
+# branch (causa 'RmInitAdapter failed' su Blackwell): rimuove il closed.
+ensure_single_nvidia_module() {
+    local br="$1"
+    if pkg_installed "nvidia-dkms-${br}" && pkg_installed "nvidia-dkms-${br}-open"; then
+        dlog "Rilevati closed+open per branch ${br}: rimuovo i pacchetti closed."
+        run env DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+            "nvidia-dkms-${br}" "nvidia-kernel-source-${br}" 2>/dev/null || true
+        run env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+    fi
+    # Verifica finale con dpkg -l: non devono restare entrambi.
+    if pkg_installed "nvidia-dkms-${br}" && pkg_installed "nvidia-dkms-${br}-open"; then
+        dlog "ATTENZIONE: closed+open ancora entrambi presenti per ${br} (verifica manuale)."
+        return 1
+    fi
+    return 0
+}
+
+# Installa il modulo OPEN dello stesso branch (Blackwell/RTX 50xx). Ritorna 0 solo
+# se DKMS risulta 'installed'. Rimuove il closed dello stesso branch.
+install_nvidia_open() {
+    local br="$1"
+    dlog "Provo modulo OPEN: nvidia-driver-${br}-open (+ nvidia-dkms-${br}-open, nvidia-utils-${br})."
+    if ! run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            "nvidia-driver-${br}-open" "nvidia-dkms-${br}-open" "nvidia-utils-${br}"; then
+        dlog "Pacchetto OPEN ${br} non disponibile/installazione fallita."
+        return 1
+    fi
+    ensure_single_nvidia_module "$br" || true
+    if nvidia_dkms_installed; then
+        dlog "OK: DKMS 'installed' per il modulo OPEN ${br}."
+        return 0
+    fi
+    dlog "DKMS non 'installed' per OPEN ${br} (dkms status: $(dkms status 2>/dev/null | tr '\n' ';'))."
+    return 1
+}
+
+# Fallback: modulo CLOSED dello stesso branch.
+install_nvidia_closed() {
+    local br="$1"
+    dlog "FALLBACK modulo CLOSED: nvidia-driver-${br} (+ nvidia-utils-${br})."
+    # Rimuovi eventuale open rimasto rotto per non avere doppio modulo.
+    if pkg_installed "nvidia-dkms-${br}-open"; then
+        run env DEBIAN_FRONTEND=noninteractive apt-get purge -y "nvidia-dkms-${br}-open" 2>/dev/null || true
+    fi
+    if ! run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            "nvidia-driver-${br}" "nvidia-utils-${br}"; then
+        dlog "Installazione closed ${br} via metapacchetto fallita: provo 'ubuntu-drivers autoinstall'."
+        run ubuntu-drivers autoinstall || { dlog "ubuntu-drivers autoinstall fallito."; return 1; }
+    fi
+    if nvidia_dkms_installed; then
+        dlog "OK: DKMS 'installed' per il modulo CLOSED ${br}."
+    else
+        dlog "AVVISO: DKMS non 'installed' per CLOSED ${br} (potrebbe usare modulo precompilato)."
+    fi
+    return 0
+}
+
 install_nvidia_driver() {
+    mkdir -p "${MINEOS_LOGS}" 2>/dev/null || true
     if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
-        log INFO "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+        dlog "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
         verify_nvidia_gpu_visibility
         return 0
     fi
     local pm; pm="$(detect_pkg_mgr)"
-    log INFO "Installazione driver NVIDIA proprietari..."
+    dlog "Installazione driver NVIDIA (preferenza: modulo OPEN per Blackwell/RTX 50xx)."
     case "$pm" in
         apt)
             run apt-get update -y
-            run env DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
-            # Individua il driver raccomandato (es. 'nvidia-driver-535') e installa
-            # ESPLICITAMENTE anche nvidia-utils-<ver> (fornisce 'nvidia-smi'),
-            # così non manca dopo il reboot.
-            local rec ver
-            rec="$(ubuntu-drivers devices 2>/dev/null | grep -oE 'nvidia-driver-[0-9]+' | sort -V | tail -1)"
-            if [[ -n "$rec" ]]; then
-                ver="${rec#nvidia-driver-}"
-                log INFO "Driver raccomandato: ${rec} (installo driver + nvidia-utils-${ver})."
-                run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-                    "nvidia-driver-${ver}" "nvidia-utils-${ver}" \
-                    || run ubuntu-drivers autoinstall
+            run env DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common dkms
+            local br; br="$(nvidia_branch_recommended)"
+            if [[ -z "$br" ]]; then
+                dlog "Nessun branch nvidia raccomandato da ubuntu-drivers: uso 'ubuntu-drivers autoinstall'."
+                run ubuntu-drivers autoinstall || dlog "ubuntu-drivers autoinstall fallito (proseguo)."
             else
-                log WARN "Nessun driver raccomandato rilevato: uso 'ubuntu-drivers install'."
-                run ubuntu-drivers install || run ubuntu-drivers autoinstall
-                # Tentativo best-effort di garantire nvidia-smi.
-                run env DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-utils \
-                    || log WARN "nvidia-utils generico non disponibile (ok se il driver lo include)."
+                dlog "Branch NVIDIA scelto: ${br}."
+                # 1) prova OPEN; 2) se non disponibile o DKMS non compila -> CLOSED.
+                if install_nvidia_open "$br"; then
+                    dlog "Driver OPEN ${br} installato e verificato (DKMS installed)."
+                else
+                    dlog "OPEN ${br} non riuscito: eseguo FALLBACK al closed ${br}."
+                    install_nvidia_closed "$br" || dlog "ERRORE: sia OPEN che CLOSED ${br} falliti. Verifica ${DRIVER_LOG}."
+                fi
+            fi
+            # initramfs aggiornato dopo l'installazione del modulo.
+            run update-initramfs -u || dlog "AVVISO: update-initramfs fallito (proseguo)."
+            # Verifica finale dpkg: non devono coesistere closed+open dello stesso branch.
+            if [[ -n "$br" ]]; then
+                dlog "dpkg nvidia (branch ${br}): $(dpkg -l | grep -E "nvidia-(dkms|driver)-${br}(-open)?" | awk '{print $2"="$1}' | tr '\n' ' ')"
             fi
             ;;
         dnf)
             run dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda
             ;;
         pacman)
-            run pacman -S --noconfirm nvidia nvidia-utils
+            run pacman -S --noconfirm nvidia-open nvidia-utils || run pacman -S --noconfirm nvidia nvidia-utils
             ;;
         *) die "Installazione driver NVIDIA non supportata su questo package manager." ;;
     esac
-    log INFO "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel."
+    dlog "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel. Log: ${DRIVER_LOG}"
     apply_nvidia_boot_fix
     apply_multigpu_grub_fix
     mark_reboot_required

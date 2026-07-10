@@ -103,6 +103,8 @@ autoinstall:
     - ca-certificates
     - pciutils
     - jq
+    # SSH garantito nell'immagine (gestione remota headless).
+    - openssh-server
 
   # Aggiornamenti durante l'installer: solo pocket -security (il resto lo
   # gestisce update-mineos.sh sul sistema installato).
