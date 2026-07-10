@@ -7,11 +7,14 @@
 # Se anche una sola GPU va in "RmInitAdapter failed" (es. Blackwell non
 # supportata dal branch installato, o scheda con contatto instabile),
 # l'enumerazione OpenCL/CUDA puo' crollare e il miner non parte per NESSUNA
-# scheda. Questo helper individua le GPU REALMENTE inizializzate dal driver
-# (nvidia-smi) e le confronta con quelle presenti sul bus PCI (lspci):
-#   - logga le anomalie in /opt/mineos/logs/gpu-health.log;
-#   - stampa su STDOUT la lista (CSV) degli index GPU SANI, da passare al miner
-#     cosi' si mina solo sulle GPU funzionanti invece di far fallire tutto.
+# scheda. Questo helper individua le GPU sane in DUE livelli:
+#   1) DRIVER: GPU realmente inizializzate da nvidia-smi vs presenti su lspci;
+#   2) OpenCL: se 'clinfo' e' disponibile, verifica che la piattaforma NVIDIA si
+#      inizializzi (clinfo -l elenca device NVIDIA, niente "Number of platforms 0"
+#      / errori). Alcune Blackwell sono viste da nvidia-smi ma fanno crollare
+#      OpenCL: in tal caso proviamo a isolare la GPU colpevole testando una device
+#      alla volta (CUDA_VISIBLE_DEVICES) ed escludendola.
+# Risultato: si mina solo sulle GPU funzionanti invece di far fallire tutto.
 #
 # STDOUT = solo la CSV degli id sani (es. "0,1,3"). Tutto il resto va nel log.
 # Non fallisce mai (exit 0) e non interrompe il boot.
@@ -36,6 +39,66 @@ _norm_bus() {
         [0-9a-f]*:*.*)   b="0000:${b}" ;;        # senza dominio -> aggiungi 0000
     esac
     printf '%s' "$b"
+}
+
+# L'output di clinfo mostra una piattaforma NVIDIA utilizzabile?
+# 0 = OpenCL NVIDIA OK; 1 = errore/vuoto.
+_clinfo_output_ok() {
+    local out="$1"
+    grep -qi 'Number of platforms 0' <<< "$out" && return 1
+    grep -qi 'nvidia' <<< "$out" || return 1
+    return 0
+}
+
+# Livello 2: verifica OpenCL (clinfo). Riceve la CSV degli id sani da nvidia-smi,
+# stampa su stdout la CSV eventualmente ridotta (solo GPU OpenCL-sane). Diagnostica
+# nel log. Se clinfo non c'e', ritorna la lista invariata. Idempotente.
+opencl_refine() {
+    local healthy_csv="$1"
+    command -v clinfo >/dev/null 2>&1 || { printf '%s' "$healthy_csv"; return 0; }
+    [[ -z "$healthy_csv" ]] && { printf '%s' "$healthy_csv"; return 0; }
+
+    local out rc
+    out="$(timeout 30 clinfo -l 2>&1)"; rc=$?
+    if [[ $rc -eq 0 ]] && _clinfo_output_ok "$out"; then
+        hlog "OpenCL OK: piattaforma NVIDIA inizializzata (clinfo -l elenca device NVIDIA)."
+        printf '%s' "$healthy_csv"; return 0
+    fi
+
+    # clinfo fallisce/vuoto MENTRE nvidia-smi vede le GPU -> anomalia OpenCL.
+    hlog "ANOMALIA OpenCL: 'clinfo -l' fallito o senza device NVIDIA (rc=${rc}) mentre nvidia-smi vede le GPU."
+    hlog "  clinfo -l (estratto): $(tr '\n' '|' <<< "$out" | cut -c1-400)"
+    hlog "Isolo la GPU che fa crashare OpenCL: test una device alla volta (CUDA_VISIBLE_DEVICES)."
+
+    local -a ids good=() bad=()
+    IFS=',' read -ra ids <<< "$healthy_csv"
+    local id o2 r2
+    for id in "${ids[@]}"; do
+        [[ -z "$id" ]] && continue
+        # CUDA_DEVICE_ORDER=PCI_BUS_ID allinea l'indice CUDA a quello di nvidia-smi;
+        # l'OpenCL NVIDIA rispetta CUDA_VISIBLE_DEVICES per mascherare le altre GPU.
+        o2="$(CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES="$id" timeout 20 clinfo -l 2>&1)"; r2=$?
+        if [[ $r2 -eq 0 ]] && _clinfo_output_ok "$o2"; then
+            good+=( "$id" )
+        else
+            bad+=( "$id" )
+            hlog "  GPU idx ${id}: OpenCL FALLITO (rc=${r2}) -> esclusa dal mining."
+        fi
+    done
+
+    if [[ ${#good[@]} -gt 0 ]]; then
+        [[ ${#bad[@]} -gt 0 ]] && \
+            hlog "GPU escluse per crash OpenCL: [$(IFS=,; echo "${bad[*]}")]. GPU OpenCL-sane: [$(IFS=,; echo "${good[*]}")]."
+        printf '%s' "$(IFS=,; echo "${good[*]}")"
+        return 0
+    fi
+
+    # Nessuna device supera il test isolato: o il masking non e' efficace, o la GPU
+    # colpevole crasha comunque. Non blocchiamo il mining: segnaliamo e teniamo la
+    # lista di nvidia-smi, lasciando l'ultima parola al miner.
+    hlog "Impossibile isolare con certezza la GPU colpevole del crash OpenCL (CUDA_VISIBLE_DEVICES inefficace?): mantengo la lista nvidia-smi [${healthy_csv}]."
+    printf '%s' "$healthy_csv"
+    return 0
 }
 
 main() {
@@ -88,7 +151,13 @@ main() {
 
     if [[ -z "$healthy" ]]; then
         hlog "NESSUNA GPU sana rilevata da nvidia-smi: il miner non ricevera' una device-list (verra' usata l'enumerazione di default)."
+        printf '%s' ""
+        return 0
     fi
+
+    # Livello 2 - OpenCL: alcune GPU sono viste da nvidia-smi ma fanno crollare
+    # l'inizializzazione OpenCL (clinfo). Raffiniamo escludendo quelle colpevoli.
+    healthy="$(opencl_refine "$healthy")"
 
     # STDOUT: solo la CSV degli id sani (consumata da mineos-agent).
     printf '%s' "$healthy"
