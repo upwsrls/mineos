@@ -37,7 +37,7 @@ chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh 2>/dev/null || true
 chmod +x /opt/mineos/bin/first-boot-setup.sh /opt/mineos/bin/fix-rig-pearl.sh \
     /opt/mineos/bin/fix-nvidia-boot.sh /opt/mineos/bin/fix-gpu-detect.sh \
     /opt/mineos/bin/apply-gpu-oc.sh /opt/mineos/bin/gpu-fan-daemon.sh \
-    /opt/mineos/bin/tailscale-up.sh 2>/dev/null || true
+    /opt/mineos/bin/tailscale-up.sh /opt/mineos/bin/gpu-health-check.sh 2>/dev/null || true
 # Verifica bloccante: senza questo script il first boot non parte.
 if [[ ! -x /opt/mineos/bin/first-boot-setup.sh ]]; then
     echo "[mineos-install][ERRORE] /opt/mineos/bin/first-boot-setup.sh mancante o non eseguibile." >&2
@@ -110,36 +110,72 @@ fi
 
 # 3) Voce GRUB "mineOS (safe/recovery)": boot senza driver NVIDIA, multi-user,
 #    per garantire l'accesso SSH e riparare se il boot normale si blocca.
-ROOT_UUID="$(findmnt -no UUID / 2>/dev/null || true)"
-[[ -z "${ROOT_UUID}" ]] && ROOT_UUID="$(blkid -s UUID -o value "$(findmnt -no SOURCE / 2>/dev/null)" 2>/dev/null || true)"
-if [[ -n "${ROOT_UUID}" ]]; then
-    cat > /etc/grub.d/40_custom <<EOF
+#    La generiamo come SCRIPT DINAMICO /etc/grub.d/11_mineos_recovery: a ogni
+#    'update-grub' rileva il KERNEL PIU' RECENTE (percorsi ESPLICITI, non symlink
+#    generici) e il modulo GRUB del filesystem root. Cosi' la voce resta valida
+#    anche dopo gli aggiornamenti del kernel (update-grub gira nel postinst del
+#    pacchetto kernel Ubuntu -> /etc/kernel/postinst.d/zz-update-grub).
+cat > /etc/grub.d/11_mineos_recovery <<'GRUBGEN'
 #!/bin/sh
-exec tail -n +3 \$0
-# Voce di RECUPERO mineOS: avvia senza driver NVIDIA (blacklist) in multi-user,
-# cosi' il rig resta raggiungibile via SSH anche se una GPU crasha al boot.
-menuentry 'mineOS (safe/recovery - no NVIDIA)' --class recovery {
+# mineOS - generatore voce di RECUPERO (dinamico: sempre kernel piu' recente).
+# Output su stdout: una menuentry GRUB. Errori/avvisi su stderr (log build).
+set -u
+
+root_uuid="$(findmnt -no UUID / 2>/dev/null || true)"
+[ -z "$root_uuid" ] && root_uuid="$(blkid -s UUID -o value "$(findmnt -no SOURCE / 2>/dev/null)" 2>/dev/null || true)"
+if [ -z "$root_uuid" ]; then
+    echo "mineOS/11_recovery: UUID root non determinato, salto la voce." >&2
+    exit 0
+fi
+
+# Modulo GRUB corretto per il filesystem root (NON hardcodare ext2).
+root_fstype="$(findmnt -no FSTYPE / 2>/dev/null || true)"
+case "$root_fstype" in
+    ext2|ext3|ext4) fsmod="ext2" ;;   # il modulo 'ext2' di GRUB gestisce ext2/3/4
+    btrfs)          fsmod="btrfs" ;;
+    xfs)            fsmod="xfs" ;;
+    f2fs)           fsmod="f2fs" ;;
+    *)              fsmod="ext2" ; echo "mineOS/11_recovery: fstype '$root_fstype' non mappato, uso ext2." >&2 ;;
+esac
+
+# Kernel PIU' RECENTE con percorsi ESPLICITI (non i symlink generici).
+kver="$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#.*/vmlinuz-##' | sort -V | tail -1)"
+if [ -n "$kver" ] && [ -e "/boot/vmlinuz-$kver" ]; then
+    kimg="/boot/vmlinuz-$kver"
+    if [ -e "/boot/initrd.img-$kver" ]; then
+        kinitrd="/boot/initrd.img-$kver"
+    else
+        kinitrd="/boot/initrd.img"
+        echo "mineOS/11_recovery: initrd versionato assente per $kver, uso symlink /boot/initrd.img." >&2
+    fi
+else
+    # Fallback: symlink generici (con avviso).
+    kimg="/boot/vmlinuz"; kinitrd="/boot/initrd.img"
+    echo "mineOS/11_recovery: nessun vmlinuz versionato in /boot, uso symlink generici (ripiego)." >&2
+fi
+
+cat <<EOF
+menuentry 'mineOS (safe/recovery - no NVIDIA)' --class recovery --class mineos {
     recordfail
     load_video
     insmod gzio
     insmod part_gpt
-    insmod ext2
-    search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
-    linux /boot/vmlinuz root=UUID=${ROOT_UUID} ro modprobe.blacklist=nvidia,nvidia_drm,nvidia_uvm,nvidia_modeset systemd.unit=multi-user.target nomodeset
-    initrd /boot/initrd.img
+    insmod ${fsmod}
+    search --no-floppy --fs-uuid --set=root ${root_uuid}
+    echo 'mineOS recovery: avvio senza driver NVIDIA (${kimg})...'
+    linux ${kimg} root=UUID=${root_uuid} ro modprobe.blacklist=nvidia,nvidia_drm,nvidia_uvm,nvidia_modeset systemd.unit=multi-user.target nomodeset
+    initrd ${kinitrd}
 }
 EOF
-    chmod +x /etc/grub.d/40_custom
-    # Menu visibile per qualche secondo cosi' la voce safe e' selezionabile.
-    if [[ -f /etc/default/grub ]]; then
-        sed -i 's/^#\?GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub
-        grep -q '^GRUB_TIMEOUT_STYLE=' /etc/default/grub || echo 'GRUB_TIMEOUT_STYLE=menu' >> /etc/default/grub
-        sed -i 's/^#\?GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
-    fi
-    update-grub 2>/dev/null || echo "[mineos-install] AVVISO: update-grub fallito (verra' rigenerato al first boot)."
-else
-    echo "[mineos-install] AVVISO: UUID root non determinato: salto voce GRUB safe (riprovo al first boot)."
+GRUBGEN
+chmod +x /etc/grub.d/11_mineos_recovery
+# Menu visibile per qualche secondo cosi' la voce safe e' selezionabile.
+if [[ -f /etc/default/grub ]]; then
+    sed -i 's/^#\?GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub
+    grep -q '^GRUB_TIMEOUT_STYLE=' /etc/default/grub || echo 'GRUB_TIMEOUT_STYLE=menu' >> /etc/default/grub
+    sed -i 's/^#\?GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
 fi
+update-grub 2>/dev/null || echo "[mineos-install] AVVISO: update-grub fallito (verra' rigenerato al first boot / prossimo update kernel)."
 
 # ---------------------------------------------------------------------------
 # Tailscale: preinstallato, servizio abilitato, ma NESSUN 'up' in build.

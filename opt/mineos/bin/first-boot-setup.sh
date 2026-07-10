@@ -90,6 +90,15 @@ ensure_base_tools() {
 # Log dedicato all'installazione driver (richiesto: /opt/mineos/logs/driver-install.log)
 DRIVER_LOG="${MINEOS_LOGS}/driver-install.log"
 
+# Timeout ESPLICITI (secondi) sulle operazioni lente: un apt/dkms appeso NON
+# deve mai bloccare il boot. Allo scadere il comando viene ucciso e si prosegue
+# (con fallback). Vedi anche TimeoutStartSec nella unit mineos-firstboot.service.
+TO_APT_UPDATE=300     # apt-get update
+TO_APT_INSTALL=1200   # apt-get install (include compilazione DKMS)
+TO_APT_PURGE=300      # apt-get purge/autoremove
+TO_DRIVERS=1200       # ubuntu-drivers autoinstall
+TO_INITRAMFS=600      # update-initramfs -u
+
 # Logga sia sul log generale sia sul log driver dedicato.
 dlog() {
     mkdir -p "${MINEOS_LOGS}" 2>/dev/null || true
@@ -122,9 +131,9 @@ ensure_single_nvidia_module() {
     local br="$1"
     if pkg_installed "nvidia-dkms-${br}" && pkg_installed "nvidia-dkms-${br}-open"; then
         dlog "Rilevati closed+open per branch ${br}: rimuovo i pacchetti closed."
-        run env DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+        run timeout "${TO_APT_PURGE}" env DEBIAN_FRONTEND=noninteractive apt-get purge -y \
             "nvidia-dkms-${br}" "nvidia-kernel-source-${br}" 2>/dev/null || true
-        run env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+        run timeout "${TO_APT_PURGE}" env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
     fi
     # Verifica finale con dpkg -l: non devono restare entrambi.
     if pkg_installed "nvidia-dkms-${br}" && pkg_installed "nvidia-dkms-${br}-open"; then
@@ -139,9 +148,9 @@ ensure_single_nvidia_module() {
 install_nvidia_open() {
     local br="$1"
     dlog "Provo modulo OPEN: nvidia-driver-${br}-open (+ nvidia-dkms-${br}-open, nvidia-utils-${br})."
-    if ! run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    if ! run timeout "${TO_APT_INSTALL}" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
             "nvidia-driver-${br}-open" "nvidia-dkms-${br}-open" "nvidia-utils-${br}"; then
-        dlog "Pacchetto OPEN ${br} non disponibile/installazione fallita."
+        dlog "Pacchetto OPEN ${br} non disponibile/installazione fallita/timeout."
         return 1
     fi
     ensure_single_nvidia_module "$br" || true
@@ -159,12 +168,12 @@ install_nvidia_closed() {
     dlog "FALLBACK modulo CLOSED: nvidia-driver-${br} (+ nvidia-utils-${br})."
     # Rimuovi eventuale open rimasto rotto per non avere doppio modulo.
     if pkg_installed "nvidia-dkms-${br}-open"; then
-        run env DEBIAN_FRONTEND=noninteractive apt-get purge -y "nvidia-dkms-${br}-open" 2>/dev/null || true
+        run timeout "${TO_APT_PURGE}" env DEBIAN_FRONTEND=noninteractive apt-get purge -y "nvidia-dkms-${br}-open" 2>/dev/null || true
     fi
-    if ! run env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    if ! run timeout "${TO_APT_INSTALL}" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
             "nvidia-driver-${br}" "nvidia-utils-${br}"; then
-        dlog "Installazione closed ${br} via metapacchetto fallita: provo 'ubuntu-drivers autoinstall'."
-        run ubuntu-drivers autoinstall || { dlog "ubuntu-drivers autoinstall fallito."; return 1; }
+        dlog "Installazione closed ${br} via metapacchetto fallita/timeout: provo 'ubuntu-drivers autoinstall'."
+        run timeout "${TO_DRIVERS}" ubuntu-drivers autoinstall || { dlog "ubuntu-drivers autoinstall fallito/timeout."; return 1; }
     fi
     if nvidia_dkms_installed; then
         dlog "OK: DKMS 'installed' per il modulo CLOSED ${br}."
@@ -176,21 +185,24 @@ install_nvidia_closed() {
 
 install_nvidia_driver() {
     mkdir -p "${MINEOS_LOGS}" 2>/dev/null || true
+    dlog "===== INIZIO installazione driver NVIDIA: $(date --iso-8601=seconds 2>/dev/null || date) ====="
     if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
         dlog "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
         verify_nvidia_gpu_visibility
+        dlog "===== FINE installazione driver NVIDIA (già presente): $(date --iso-8601=seconds 2>/dev/null || date) ====="
         return 0
     fi
     local pm; pm="$(detect_pkg_mgr)"
     dlog "Installazione driver NVIDIA (preferenza: modulo OPEN per Blackwell/RTX 50xx)."
     case "$pm" in
         apt)
-            run apt-get update -y
-            run env DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common dkms
+            run timeout "${TO_APT_UPDATE}" apt-get update -y || dlog "AVVISO: apt-get update fallito/timeout (proseguo)."
+            run timeout "${TO_APT_INSTALL}" env DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common dkms \
+                || dlog "AVVISO: install ubuntu-drivers-common/dkms fallito/timeout (proseguo)."
             local br; br="$(nvidia_branch_recommended)"
             if [[ -z "$br" ]]; then
                 dlog "Nessun branch nvidia raccomandato da ubuntu-drivers: uso 'ubuntu-drivers autoinstall'."
-                run ubuntu-drivers autoinstall || dlog "ubuntu-drivers autoinstall fallito (proseguo)."
+                run timeout "${TO_DRIVERS}" ubuntu-drivers autoinstall || dlog "ubuntu-drivers autoinstall fallito/timeout (proseguo)."
             else
                 dlog "Branch NVIDIA scelto: ${br}."
                 # 1) prova OPEN; 2) se non disponibile o DKMS non compila -> CLOSED.
@@ -202,24 +214,27 @@ install_nvidia_driver() {
                 fi
             fi
             # initramfs aggiornato dopo l'installazione del modulo.
-            run update-initramfs -u || dlog "AVVISO: update-initramfs fallito (proseguo)."
+            run timeout "${TO_INITRAMFS}" update-initramfs -u || dlog "AVVISO: update-initramfs fallito/timeout (proseguo)."
             # Verifica finale dpkg: non devono coesistere closed+open dello stesso branch.
             if [[ -n "$br" ]]; then
                 dlog "dpkg nvidia (branch ${br}): $(dpkg -l | grep -E "nvidia-(dkms|driver)-${br}(-open)?" | awk '{print $2"="$1}' | tr '\n' ' ')"
             fi
             ;;
         dnf)
-            run dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda
+            run timeout "${TO_APT_INSTALL}" dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda || dlog "AVVISO: install driver dnf fallito/timeout."
             ;;
         pacman)
-            run pacman -S --noconfirm nvidia-open nvidia-utils || run pacman -S --noconfirm nvidia nvidia-utils
+            run timeout "${TO_APT_INSTALL}" pacman -S --noconfirm nvidia-open nvidia-utils \
+                || run timeout "${TO_APT_INSTALL}" pacman -S --noconfirm nvidia nvidia-utils \
+                || dlog "AVVISO: install driver pacman fallito/timeout."
             ;;
-        *) die "Installazione driver NVIDIA non supportata su questo package manager." ;;
+        *) dlog "Package manager non supportato per i driver NVIDIA: salto (SSH resta comunque attivo)."; ;;
     esac
-    dlog "Driver NVIDIA installati: necessario REBOOT per caricare il modulo kernel. Log: ${DRIVER_LOG}"
+    dlog "Driver NVIDIA: installazione conclusa, necessario REBOOT per caricare il modulo. Log: ${DRIVER_LOG}"
     apply_nvidia_boot_fix
     apply_multigpu_grub_fix
     mark_reboot_required
+    dlog "===== FINE installazione driver NVIDIA: $(date --iso-8601=seconds 2>/dev/null || date) ====="
 }
 
 install_amd_driver() {

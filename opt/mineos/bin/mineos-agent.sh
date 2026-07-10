@@ -157,6 +157,24 @@ find_miner_binary() {
 # ----------------------------------------------------------------------------
 # Costruzione argomenti per miner + scrittura agent.env per il watchdog
 # ----------------------------------------------------------------------------
+# Calcola gli id GPU SANI (inizializzati dal driver) tramite l'helper di health
+# check. Popola la variabile globale GPU_IDS (CSV, es. "0,1,3"). Se l'helper non
+# c'e' o non trova nulla, GPU_IDS resta vuota e il miner usa l'enumerazione di
+# default. Non fa mai fallire l'avvio (una GPU rotta non deve bloccare il mining).
+compute_healthy_gpu_ids() {
+    GPU_IDS=""
+    local helper="${SCRIPT_DIR}/gpu-health-check.sh"
+    [[ -x "$helper" ]] || helper="/opt/mineos/bin/gpu-health-check.sh"
+    if [[ -f "$helper" ]]; then
+        GPU_IDS="$(bash "$helper" 2>/dev/null || true)"
+    fi
+    if [[ -n "$GPU_IDS" ]]; then
+        log INFO "GPU sane selezionate per il miner: [${GPU_IDS}] (le GPU in errore vengono escluse)."
+    else
+        log WARN "Nessuna device-list GPU sana: uso l'enumerazione di default del miner."
+    fi
+}
+
 build_args() {
     local hostport; hostport="$(pool_hostport)"
     case "$MINER" in
@@ -171,6 +189,8 @@ build_args() {
                 # Riavvio interno disattivato: la gestione restart la fa systemd/watchdog.
                 --no-watchdog
             )
+            # Solo le GPU sane (una scheda in RmInitAdapter non blocca le altre).
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( -d "$GPU_IDS" )
             ;;
         lolminer)
             API_PORT="$API_PORT_LOL"; API_TYPE="lolminer"
@@ -181,6 +201,7 @@ build_args() {
                 --pass "$POOL_PASS"
                 --apiport "$API_PORT"
             )
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( --devices "$GPU_IDS" )
             ;;
         srbminer)
             API_PORT="$API_PORT_SRB"; API_TYPE="srbminer"
@@ -195,6 +216,9 @@ build_args() {
                 --api-enable
                 --api-port "$API_PORT"
             )
+            # Passa esplicitamente solo le GPU sane: se una Blackwell/rotta va in
+            # RmInitAdapter, SRBMiner mina comunque sulle altre invece di abortire.
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( --gpu-id "$GPU_IDS" )
             ;;
         *) die "Miner non supportato: $MINER" ;;
     esac
@@ -245,6 +269,9 @@ main() {
     mkdir -p "${MINEOS_STATE}" "${MINEOS_LOGS}" 2>/dev/null || true
     load_all_conf
     apply_tuning
+    # Isola le GPU in errore PRIMA di costruire gli args: il miner riceve solo
+    # gli id delle GPU sane, cosi' una scheda difettosa non blocca tutte le altre.
+    compute_healthy_gpu_ids
     build_args
 
     local bin; bin="$(find_miner_binary)"
