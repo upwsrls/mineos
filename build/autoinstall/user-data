@@ -75,25 +75,18 @@ autoinstall:
         echo "[mineos-early] Nessun disco target sicuro trovato: salto wipe."
       fi
 
-  # --- Storage: partizionamento ESPLICITO su tutto il disco interno --------
-  # Config esplicita (non 'layout: direct') per evitare i due problemi classici:
-  #   1) root sottodimensionato -> "disk full" subito dopo l'installazione;
-  #   2) riuso di partizioni esistenti -> crash su superblock residui.
-  # match {size: largest} sceglie il disco piu' grande (l'SSD interno, non l'USB).
-  # wipe: superblock-recursive pulisce ogni firma prima di partizionare.
-  # Schema ibrido BIOS+UEFI: bios_grub (1M) + ESP (=512M) + root ext4 (resto).
+  # --- Storage: layout automatico affidabile di Ubuntu ---------------------
+  # 'layout: direct' lascia a subiquity il partizionamento: rileva da solo la
+  # modalita' di boot (UEFI o BIOS legacy) e crea la partizione bootloader
+  # CORRETTA per quella modalita'. Un partizionamento manuale con SIA bios_grub
+  # SIA ESP fa fallire subiquity con "autoinstall config did not create needed
+  # bootloader partition". La pulizia del disco e' gia' garantita dagli
+  # early-commands sopra (wipefs/sgdisk/dd sul disco interno piu' grande).
   storage:
+    layout:
+      name: direct
     swap:
       size: 0
-    config:
-      - {type: disk, id: disk0, match: {size: largest}, ptable: gpt, wipe: superblock-recursive, preserve: false}
-      - {type: partition, id: bios_boot, device: disk0, size: 1M, flag: bios_grub, wipe: superblock}
-      - {type: partition, id: efi, device: disk0, size: 512M, flag: boot, grub_device: true, wipe: superblock}
-      - {type: format, id: efi_fmt, volume: efi, fstype: fat32}
-      - {type: mount, id: efi_mount, device: efi_fmt, path: /boot/efi}
-      - {type: partition, id: root, device: disk0, size: -1, wipe: superblock}
-      - {type: format, id: root_fmt, volume: root, fstype: ext4}
-      - {type: mount, id: root_mount, device: root_fmt, path: /}
 
   # --- Pacchetti minimi necessari gia' in fase di installazione ------------
   packages:
