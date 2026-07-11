@@ -114,10 +114,19 @@ nvidia_branch_recommended() {
         | sort -n | tail -1
 }
 
-# Il modulo DKMS nvidia risulta 'installed' (non solo 'built')?
+# Il modulo DKMS nvidia risulta 'installed' PER IL KERNEL CORRENTE (uname -r)?
+# Questo e' l'UNICO criterio di successo dell'installazione driver al primo boot:
+# il modulo appena compilato NON e' ancora caricato in RAM, quindi nvidia-smi
+# fallirebbe SEMPRE (si caricherà al reboot). Ci basiamo su DKMS, non su nvidia-smi.
+# Uso: nvidia_dkms_installed [branch]  (branch opzionale per restringere il match).
 nvidia_dkms_installed() {
     command -v dkms >/dev/null 2>&1 || return 1
-    dkms status 2>/dev/null | grep -Ei 'nvidia' | grep -qi 'installed'
+    local br="${1:-}" kver lines
+    kver="$(uname -r)"
+    # Righe DKMS del modulo nvidia relative al kernel in esecuzione.
+    lines="$(dkms status 2>/dev/null | grep -i 'nvidia' | grep -F "$kver" || true)"
+    [[ -n "$br" ]] && lines="$(printf '%s\n' "$lines" | grep -F "$br" || true)"
+    printf '%s\n' "$lines" | grep -qi 'installed'
 }
 
 # dpkg: pacchetto installato (stato 'ii')?
@@ -143,8 +152,10 @@ ensure_single_nvidia_module() {
     return 0
 }
 
-# Installa il modulo OPEN dello stesso branch (Blackwell/RTX 50xx). Ritorna 0 solo
-# se DKMS risulta 'installed'. Rimuove il closed dello stesso branch.
+# Installa il modulo OPEN dello stesso branch (Blackwell/RTX 50xx).
+# SUCCESSO = compilazione DKMS 'installed' per il KERNEL CORRENTE. NON usa
+# nvidia-smi (al primo boot il modulo non e' ancora caricato): usarlo qui
+# provocherebbe un fallback errato al closed, fatale per le Blackwell.
 install_nvidia_open() {
     local br="$1"
     dlog "Provo modulo OPEN: nvidia-driver-${br}-open (+ nvidia-dkms-${br}-open, nvidia-utils-${br})."
@@ -154,15 +165,18 @@ install_nvidia_open() {
         return 1
     fi
     ensure_single_nvidia_module "$br" || true
-    if nvidia_dkms_installed; then
-        dlog "OK: DKMS 'installed' per il modulo OPEN ${br}."
+    # Verifica ESCLUSIVAMENTE via DKMS (kernel corrente), MAI via nvidia-smi.
+    if nvidia_dkms_installed "$br"; then
+        dlog "OK: modulo OPEN ${br} compilato via DKMS ('installed' per kernel $(uname -r)). Si caricherà al reboot."
         return 0
     fi
-    dlog "DKMS non 'installed' per OPEN ${br} (dkms status: $(dkms status 2>/dev/null | tr '\n' ';'))."
+    dlog "FALLITA compilazione DKMS del modulo OPEN ${br} per kernel $(uname -r) (dkms status: $(dkms status 2>/dev/null | grep -i nvidia | tr '\n' ';'))."
     return 1
 }
 
-# Fallback: modulo CLOSED dello stesso branch.
+# Fallback: modulo CLOSED dello stesso branch. Scatta SOLO se la compilazione
+# DKMS dell'open e' FALLITA davvero (non se nvidia-smi non risponde ancora).
+# Anche qui il successo si valuta via DKMS 'installed', non via nvidia-smi.
 install_nvidia_closed() {
     local br="$1"
     dlog "FALLBACK modulo CLOSED: nvidia-driver-${br} (+ nvidia-utils-${br})."
@@ -175,19 +189,23 @@ install_nvidia_closed() {
         dlog "Installazione closed ${br} via metapacchetto fallita/timeout: provo 'ubuntu-drivers autoinstall'."
         run timeout "${TO_DRIVERS}" ubuntu-drivers autoinstall || { dlog "ubuntu-drivers autoinstall fallito/timeout."; return 1; }
     fi
-    if nvidia_dkms_installed; then
-        dlog "OK: DKMS 'installed' per il modulo CLOSED ${br}."
-    else
-        dlog "AVVISO: DKMS non 'installed' per CLOSED ${br} (potrebbe usare modulo precompilato)."
+    # Verifica ESCLUSIVAMENTE via DKMS (kernel corrente), MAI via nvidia-smi.
+    if nvidia_dkms_installed "$br"; then
+        dlog "OK: modulo CLOSED ${br} compilato via DKMS ('installed' per kernel $(uname -r)). Si caricherà al reboot."
+        return 0
     fi
+    dlog "AVVISO: DKMS non 'installed' per CLOSED ${br} su kernel $(uname -r) (potrebbe usare un modulo precompilato che si caricherà al reboot)."
     return 0
 }
 
 install_nvidia_driver() {
     mkdir -p "${MINEOS_LOGS}" 2>/dev/null || true
     dlog "===== INIZIO installazione driver NVIDIA: $(date --iso-8601=seconds 2>/dev/null || date) ====="
+    # SOLO se il driver e' GIA' attivo (modulo caricato) usiamo nvidia-smi per la
+    # verifica di visibilita' GPU. In tutti gli altri casi la valutazione e' via
+    # DKMS: al primo boot il modulo non e' ancora caricato e nvidia-smi fallirebbe.
     if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
-        dlog "Driver NVIDIA già funzionanti: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+        dlog "Driver NVIDIA già attivo: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
         verify_nvidia_gpu_visibility
         dlog "===== FINE installazione driver NVIDIA (già presente): $(date --iso-8601=seconds 2>/dev/null || date) ====="
         return 0
@@ -219,6 +237,8 @@ install_nvidia_driver() {
             if [[ -n "$br" ]]; then
                 dlog "dpkg nvidia (branch ${br}): $(dpkg -l | grep -E "nvidia-(dkms|driver)-${br}(-open)?" | awk '{print $2"="$1}' | tr '\n' ' ')"
             fi
+            # Stato DKMS compilato (chiaro cosa verra' caricato al reboot).
+            dlog "dkms status (nvidia): $(dkms status 2>/dev/null | grep -i nvidia | tr '\n' ';' || echo 'nessun modulo nvidia in DKMS')"
             ;;
         dnf)
             run timeout "${TO_APT_INSTALL}" dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda || dlog "AVVISO: install driver dnf fallito/timeout."
