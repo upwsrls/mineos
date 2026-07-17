@@ -646,6 +646,37 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 
 ---
 
+## Compatibilità hardware e piattaforma (note dal campo)
+
+### Driver open vs closed: un TRADE-OFF, non coesistono
+mineOS installa di default il **modulo NVIDIA open** (`nvidia-driver-XXX-open`), **obbligatorio per le GPU Blackwell (RTX 50xx)**. Conseguenze da conoscere:
+
+| Modulo | Supporta | NON supporta |
+|--------|----------|--------------|
+| **open** (default) | Turing/Ampere/Ada/**Blackwell** (RTX 20/30/40/**50**xx), GTX 16xx | **Pascal e precedenti** (GTX 10xx, GT 8400 GS, ...) |
+| **closed** | Pascal → Ada | **RTX 50xx (Blackwell)** |
+
+- **Non puoi mischiare** su uno stesso rig una RTX 50xx e una GTX 1080/1080 Ti (Pascal): nessun singolo modulo le supporta entrambe.
+- Una GPU non supportata dal modulo caricato viene **rilevata e segnalata** da mineOS (in `first-boot` e `gpu-health`), e la console viene **silenziata** (`loglevel=3` + `kernel.printk`) per evitare che i messaggi `NVRM ... not supported ... (GSP)` la rendano inutilizzabile. Scollega la GPU non supportata o usa un rig omogeneo.
+
+### Piattaforme testate
+
+| Piattaforma | GPU | Esito |
+|-------------|-----|-------|
+| ASUS PRIME Z390-P + i3-9100, BIOS 2820 | RTX 5080 (Blackwell) | **OK** |
+| LianLi AX-B75M-ETH (chipset B75, 2012) | RTX 50xx | **NON funziona** |
+
+**Requisiti per far funzionare le RTX 50xx / multi-GPU moderne:**
+- Installazione in **modalità UEFI** (non Legacy/CSM).
+- **Above 4G Decoding = Enabled** nel BIOS.
+- **Resizable BAR** disponibile e attivo. Il chipset **B75 (2012) NON ha Resizable BAR**: la 5080 dà `VF BAR ... can't assign; no space` e il boot si blocca subito (journal di ~1s). Above 4G da solo **non basta** e non esiste un BIOS aggiornabile per AX-B75M-ETH → piattaforma non utilizzabile con Blackwell.
+- Collega la GPU Blackwell **direttamente allo slot x16**, **non** su riser x1 (su riser x1 la 5080 non veniva vista da `lspci`).
+
+### `pci=realloc` in GRUB
+Il first-boot aggiunge `pci=realloc` a `GRUB_CMDLINE_LINUX_DEFAULT`: chiede al kernel di **riallocare le finestre BAR PCIe** quando il firmware non le assegna correttamente, utile sui rig multi-GPU eterogenei. È innocuo sulle piattaforme che assegnano già bene le BAR; su piattaforme prive di Resizable BAR (es. B75) **non risolve** la mancanza hardware.
+
+---
+
 ## Troubleshooting
 
 ### Il rig non si avvia da USB

@@ -98,6 +98,9 @@ autoinstall:
     - jq
     # SSH garantito nell'immagine (gestione remota headless).
     - openssh-server
+    # OpenCL: SRBMiner ne ha bisogno per vedere le GPU (ICD loader + clinfo).
+    - ocl-icd-libopencl1
+    - clinfo
 
   # Aggiornamenti durante l'installer: solo pocket -security (il resto lo
   # gestisce update-mineos.sh sul sistema installato).

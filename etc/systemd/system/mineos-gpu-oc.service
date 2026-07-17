@@ -4,15 +4,20 @@
 
 [Unit]
 Description=mineOS GPU overclock (Pearl/pearlhash profiles)
-Wants=network-online.target
-After=network-online.target mineos-firstboot.service
-Before=mineos-agent.service
+After=mineos-firstboot.service
 ConditionPathExists=/opt/mineos/state/first-boot.done
+# NB: NIENTE 'Before=mineos-agent.service'. L'OC e' best-effort e NON deve poter
+# ritardare/bloccare l'avvio del miner: applica solo il power limit + ventole,
+# senza lockare i clock, quindi il mining puo' partire in parallelo senza perdite.
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/bash /opt/mineos/bin/apply-gpu-oc.sh
+# Timeout BOUNDED: se nvidia-smi si appende (gia' wrappato con timeout nello
+# script), il servizio non puo' restare 'running' all'infinito bloccando la coda
+# systemd (BUG2). Allo scadere fallisce e si prosegue.
+TimeoutStartSec=180
 StandardOutput=journal
 StandardError=journal
 

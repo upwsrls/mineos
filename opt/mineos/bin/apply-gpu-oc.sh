@@ -42,17 +42,59 @@ EOF
     esac
 done
 
-# Match nome GPU -> chiave profilo (ordine: modelli piu' specifici prima).
+# nvidia-smi/timeout: OGNI chiamata a nvidia-smi passa da qui, con timeout, cosi'
+# un driver appeso non blocca lo script (che a sua volta bloccherebbe systemd).
+NSMI_TIMEOUT=15
+nsmi() { timeout "${NSMI_TIMEOUT}" nvidia-smi "$@"; }
+
+# Il profilo con questa MODEL_KEY esiste in PROFILES?
+profile_exists() {
+    local want="$1" line kk
+    for line in "${PROFILES[@]:-}"; do
+        [[ -z "$line" ]] && continue
+        IFS='|' read -r kk _ <<< "$line"
+        [[ "$kk" == "$want" ]] && return 0
+    done
+    return 1
+}
+
+# Match nome GPU (da nvidia-smi) -> MODEL_KEY, ROBUSTO e con match parziale.
+# Normalizza il nome (rimuove 'NVIDIA'/'GeForce', punteggiatura, spazi), estrae
+# famiglia (rtx/gtx), numero modello (3-4 cifre) e suffisso (ti/super), quindi
+# prova in ordine: chiave esatta -> senza suffisso -> generazione generica (es.
+# rtx_50xx) -> default. Logga SEMPRE la chiave scelta e i candidati (BUG1).
 gpu_model_key() {
-    local name="${1,,}"
-    if   [[ "$name" == *"3090"* ]];       then printf 'rtx_3090'
-    elif [[ "$name" == *"1080 ti"* ]];   then printf 'gtx_1080_ti'
-    elif [[ "$name" == *"1080"* ]];       then printf 'gtx_1080'
-    elif [[ "$name" == *"1660 super"* ]]; then printf 'gtx_1660_super'
-    elif [[ "$name" == *"1660 ti"* ]];   then printf 'gtx_1660_ti'
-    elif [[ "$name" == *"1660"* ]];       then printf 'gtx_1660'
-    else printf 'default'
+    local raw="$1" n fam="" num="" suf=""
+    n=" ${raw,,} "
+    n="${n//nvidia/ }"; n="${n//geforce/ }"; n="${n//,/ }"; n="${n//-/ }"
+    n=" $(printf '%s' "$n" | tr -s ' \t' '  ' | sed 's/^ *//;s/ *$//') "
+    case "$n" in
+        *rtx*) fam="rtx" ;;
+        *gtx*) fam="gtx" ;;
+        *)     fam="gpu" ;;
+    esac
+    num="$(printf '%s' "$n" | grep -oE '[0-9]{3,4}' | head -1)"
+    [[ "$n" == *" super "* || "$n" == *super* ]] && suf="super"
+    [[ "$n" == *" ti "* ]] && suf="ti"
+
+    local -a cands=()
+    if [[ -n "$num" ]]; then
+        [[ -n "$suf" ]] && cands+=( "${fam}_${num}_${suf}" )
+        cands+=( "${fam}_${num}" )
+        # generazione generica: prime 2 cifre + xx (5080->50xx, 1660->16xx, 1080->10xx)
+        [[ ${#num} -eq 4 ]] && cands+=( "${fam}_${num:0:2}xx" )
     fi
+    cands+=( "default" )
+
+    local c
+    for c in "${cands[@]}"; do
+        if profile_exists "$c"; then
+            log INFO "OC match: GPU '${raw}' -> profilo '${c}' (candidati provati: ${cands[*]})."
+            printf '%s' "$c"; return 0
+        fi
+    done
+    log WARN "OC match: GPU '${raw}' senza profilo (nemmeno 'default'!). Uso 'default'."
+    printf 'default'
 }
 
 # Carica profilo MODEL_KEY -> variabili PL_W, CORE_MHZ, MEM_OFF, TEMP_TARGET, ...
@@ -93,14 +135,33 @@ load_oc_conf() {
     FAN_DAEMON="true"
     FAN_POLL_SEC="15"
     OC_ALGO="pearlhash"
+    # pearlhash e' COMPUTE-BOUND: comanda il CORE CLOCK, la memoria e' irrilevante.
+    # Strategia: NON lockare mai il core (lasciar fare il boost), MEM_OFFSET=0,
+    # gestire solo il POWER LIMIT + curva ventole. I campi CORE_MHZ/MEM_OFFSET
+    # restano nel formato per compatibilita' ma sono SEMPRE 0 e NON applicati.
+    # Formato: KEY|PL_W|CORE_MHZ|MEM_OFF|TEMP_TARGET|FAN_MIN|FAN_MAX|TEMP_LO|TEMP_HI
+    # PL_W=0 => lascia il default del driver (non forzare: 100W su una 5080 viene
+    # rifiutato). Valori PL da misure sul campo.
     PROFILES=(
-        "rtx_3090|280|1350|800|65|45|100|52|72"
-        "gtx_1080_ti|150|1550|450|62|40|100|48|70"
-        "gtx_1080|130|1500|400|62|40|100|48|70"
-        "gtx_1660_super|85|1320|550|58|35|95|44|66"
-        "gtx_1660_ti|80|1320|650|58|35|95|44|66"
-        "gtx_1660|75|1260|450|58|35|95|44|66"
-        "default|100|1200|0|65|40|100|50|75"
+        "rtx_5090|450|0|0|70|40|100|55|75"
+        "rtx_5080|360|0|0|69|40|100|55|74"
+        "rtx_5070|250|0|0|68|40|100|54|72"
+        "rtx_50xx|300|0|0|70|40|100|55|75"
+        "rtx_4090|350|0|0|66|40|100|52|72"
+        "rtx_4080|300|0|0|66|40|100|52|72"
+        "rtx_4070|200|0|0|64|40|100|50|70"
+        "rtx_40xx|280|0|0|66|40|100|52|72"
+        "rtx_3090|350|0|0|72|45|100|58|76"
+        "rtx_3080|300|0|0|70|45|100|56|74"
+        "rtx_30xx|300|0|0|70|45|100|56|74"
+        "gtx_1660_super|65|0|0|62|35|95|48|68"
+        "gtx_1660_ti|65|0|0|62|35|95|48|68"
+        "gtx_1660|60|0|0|62|35|95|48|68"
+        "gtx_16xx|65|0|0|62|35|95|48|68"
+        "gtx_1080_ti|180|0|0|68|40|100|54|72"
+        "gtx_1080|150|0|0|66|40|100|52|70"
+        "gtx_10xx|150|0|0|66|40|100|52|70"
+        "default|0|0|0|70|40|100|55|78"
     )
     if [[ -f "$OC_CONF" ]]; then
         # shellcheck disable=SC1090
@@ -118,9 +179,9 @@ reset_gpu() {
     local idx="$1"
     log INFO "GPU ${idx}: reset clock/potenza default."
     if [[ "${DRY_RUN:-0}" == "1" ]]; then return 0; fi
-    nvidia-smi -i "$idx" --reset-gpu-clocks    >/dev/null 2>&1 || true
-    nvidia-smi -i "$idx" --reset-memory-clocks >/dev/null 2>&1 || true
-    nvidia-smi -i "$idx" -rac                   >/dev/null 2>&1 || true
+    nsmi -i "$idx" --reset-gpu-clocks    >/dev/null 2>&1 || true
+    nsmi -i "$idx" --reset-memory-clocks >/dev/null 2>&1 || true
+    nsmi -i "$idx" -rac                   >/dev/null 2>&1 || true
 }
 
 apply_one_gpu() {
@@ -128,7 +189,7 @@ apply_one_gpu() {
     key="$(gpu_model_key "$name")"
     load_profile "$key" || { log WARN "GPU ${idx} (${name}): profilo non trovato, salto."; return 1; }
 
-    log INFO "GPU ${idx} [${name}] profilo=${key} PL=${PL_W}W core=${CORE_MHZ}MHz mem+${MEM_OFF}MHz target=${TEMP_TARGET}C"
+    log INFO "GPU ${idx} [${name}] profilo=${key} PL=${PL_W}W (core LIBERO/boost, mem stock) target=${TEMP_TARGET}C"
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         log INFO "DRY_RUN: salto applicazione hardware GPU ${idx}."
@@ -136,40 +197,40 @@ apply_one_gpu() {
     fi
 
     # Persistence mode (stabilita' 24/7).
-    nvidia-smi -i "$idx" -pm 1 >/dev/null 2>&1 || log WARN "GPU ${idx}: persistence mode non applicato."
+    nsmi -i "$idx" -pm 1 >/dev/null 2>&1 || log WARN "GPU ${idx}: persistence mode non applicato."
 
-    # Power limit.
+    # --- Power limit (unico parametro applicato per pearlhash) ---------------
+    # PL_W=0/vuoto => lascia il default del driver (NON forzare: es. 100W su una
+    # RTX 5080 verrebbe rifiutato). Se impostato, lo CLAMPIAMO tra min e max
+    # consentiti dalla scheda per evitare rifiuti.
     if [[ -n "$PL_W" && "$PL_W" != "0" ]]; then
-        if ! nvidia-smi -i "$idx" -pl "$PL_W" >/dev/null 2>&1; then
-            log WARN "GPU ${idx}: power limit ${PL_W}W rifiutato (prova valore piu' basso)."
+        local minpl maxpl setpl="$PL_W"
+        minpl="$(nsmi -i "$idx" --query-gpu=power.min_limit --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ' | cut -d. -f1)"
+        maxpl="$(nsmi -i "$idx" --query-gpu=power.max_limit --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ' | cut -d. -f1)"
+        if [[ "$maxpl" =~ ^[0-9]+$ ]] && (( setpl > maxpl )); then
+            log WARN "GPU ${idx}: PL ${PL_W}W > max ${maxpl}W: uso ${maxpl}W."; setpl="$maxpl"
         fi
+        if [[ "$minpl" =~ ^[0-9]+$ ]] && (( setpl < minpl )); then
+            log WARN "GPU ${idx}: PL ${PL_W}W < min ${minpl}W: uso ${minpl}W."; setpl="$minpl"
+        fi
+        if nsmi -i "$idx" -pl "$setpl" >/dev/null 2>&1; then
+            log INFO "GPU ${idx}: power limit ${setpl}W applicato (core lasciato in boost)."
+        else
+            log WARN "GPU ${idx}: power limit ${setpl}W rifiutato dal driver (proseguo con default)."
+        fi
+    else
+        log INFO "GPU ${idx}: nessun power limit forzato (default driver, boost pieno)."
     fi
 
-    # Memory clock: max + offset, con fallback a valore assoluto se offset fallisce.
-    local max_mem target_mem
-    max_mem="$(nvidia-smi -i "$idx" --query-gpu=clocks.max.memory --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
-    if [[ -n "$max_mem" && "$max_mem" =~ ^[0-9]+$ && -n "$MEM_OFF" ]]; then
-        target_mem=$(( max_mem + MEM_OFF ))
-        if ! nvidia-smi -i "$idx" --lock-memory-clocks="$target_mem" >/dev/null 2>&1; then
-            log WARN "GPU ${idx}: lock mem ${target_mem}MHz fallito, provo max=${max_mem}."
-            nvidia-smi -i "$idx" --lock-memory-clocks="$max_mem" >/dev/null 2>&1 \
-                || log WARN "GPU ${idx}: lock memory non supportato su questo driver/GPU."
-        fi
-    fi
+    # --- NIENTE lock core/mem: pearlhash e' compute-bound, il lock del core --
+    # DIMEZZA l'hashrate. Lasciamo che la scheda faccia boost da sola.
 
-    # Core clock lock (min=max per clock fisso mining).
-    if [[ -n "$CORE_MHZ" && "$CORE_MHZ" != "0" ]]; then
-        if ! nvidia-smi -i "$idx" --lock-gpu-clocks="$CORE_MHZ","$CORE_MHZ" >/dev/null 2>&1; then
-            log WARN "GPU ${idx}: lock core ${CORE_MHZ}MHz fallito (driver/GPU limit)."
-        fi
-    fi
-
-    # Ventola iniziale dalla curva alla temperatura attuale.
+    # --- Ventola iniziale dalla curva alla temperatura attuale --------------
     local temp fan_pct
-    temp="$(nvidia-smi -i "$idx" --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d ' ')"
+    temp="$(nsmi -i "$idx" --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d ' ')"
     [[ "$temp" =~ ^[0-9]+$ ]] || temp="$TEMP_LO"
     fan_pct="$(fan_percent_for_temp "$temp" "$TEMP_LO" "$TEMP_HI" "$FAN_MIN" "$FAN_MAX")"
-    if nvidia-smi -i "$idx" --fan-speed="$fan_pct" >/dev/null 2>&1; then
+    if nsmi -i "$idx" --fan-speed="$fan_pct" >/dev/null 2>&1; then
         log INFO "GPU ${idx}: ventola ${fan_pct}% (temp=${temp}C curva ${TEMP_LO}-${TEMP_HI}C)."
     else
         log WARN "GPU ${idx}: controllo ventola non disponibile (alcune GPU richiedono coolbits/X)."
@@ -192,8 +253,8 @@ EOF
 }
 
 apply_all() {
-    command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi non trovato."
-    nvidia-smi -L >/dev/null 2>&1 || die "Driver NVIDIA non attivo."
+    command -v nvidia-smi >/dev/null 2>&1 || { log WARN "nvidia-smi non trovato: salto OC."; return 0; }
+    nsmi -L >/dev/null 2>&1 || { log WARN "Driver NVIDIA non attivo/ non risponde: salto OC."; return 0; }
 
     local idx name
     while IFS=',' read -r idx name; do
@@ -201,7 +262,7 @@ apply_all() {
         name="${name# }"
         [[ -n "$idx" ]] || continue
         apply_one_gpu "$idx" "$name" || true
-    done < <(nvidia-smi --query-gpu=index,name --format=csv,noheader,nounits 2>/dev/null)
+    done < <(nsmi --query-gpu=index,name --format=csv,noheader,nounits 2>/dev/null)
 
     # Aggiorna rig.conf con temp target piu' restrittivo tra le GPU (per watchdog).
     if [[ -f "${MINEOS_CONFIG}/rig.conf" && "${DRY_RUN:-0}" != "1" ]]; then
@@ -216,16 +277,16 @@ apply_all() {
     fi
 
     log INFO "OC applicato. Riepilogo:"
-    nvidia-smi --query-gpu=index,name,power.limit,clocks.current.graphics,clocks.current.memory,temperature.gpu,fan.speed \
+    nsmi --query-gpu=index,name,power.limit,clocks.current.graphics,clocks.current.memory,temperature.gpu,fan.speed \
         --format=csv 2>/dev/null | tee -a "${MINEOS_LOGS}/mineos.log" >&2 || true
 }
 
 reset_all() {
-    command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi non trovato."
+    command -v nvidia-smi >/dev/null 2>&1 || { log WARN "nvidia-smi non trovato."; return 0; }
     local idx
     while read -r idx; do
         reset_gpu "$idx"
-    done < <(nvidia-smi --query-gpu=index --format=csv,noheader,nounits 2>/dev/null)
+    done < <(nsmi --query-gpu=index --format=csv,noheader,nounits 2>/dev/null)
     rm -f "${MINEOS_STATE}"/gpu-oc-*.env 2>/dev/null || true
     log INFO "Reset OC completato su tutte le GPU."
 }
@@ -248,10 +309,12 @@ main() {
     log INFO "=== apply-gpu-oc (algo=${OC_ALGO:-pearlhash}) ==="
     apply_all
 
-    if [[ "${FAN_DAEMON:-true}" == "true" && "${DRY_RUN:-0}" != "1" ]]; then
-        sysctl_safe restart mineos-gpu-fan.service 2>/dev/null \
-            || log INFO "Avvia manualmente: systemctl start mineos-gpu-fan.service"
-    fi
+    # BUG2 FIX: NON chiamare 'systemctl restart' di un altro servizio da qui.
+    # mineos-gpu-oc e' oneshot e mineos-gpu-fan e' 'After=mineos-gpu-oc': restartarlo
+    # dall'interno creava un DEADLOCK (gpu-fan aspetta gpu-oc che aspetta gpu-fan),
+    # appendendo tutta la coda di systemd. Il fan daemon parte da solo dopo di noi
+    # (WantedBy=multi-user, After=mineos-gpu-oc). Nessuna azione qui.
+    log INFO "OC completato. mineos-gpu-fan partira' automaticamente dopo questo servizio."
 }
 
 main "$@"

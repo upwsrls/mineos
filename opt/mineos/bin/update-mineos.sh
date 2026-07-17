@@ -32,13 +32,35 @@ source "${SCRIPT_DIR}/lib/common.sh"
 # ----------------------------------------------------------------------------
 FORCE=0
 DO_OS=1; DO_DRIVERS=1; DO_MINERS=1
+usage() {
+    cat <<'EOF'
+Uso: sudo update-mineos.sh [OPZIONI]
+
+Aggiorna in sicurezza OS, driver GPU e miner (con backup config e rollback).
+
+Opzioni:
+  --force          ignora la finestra "gia' aggiornato di recente" (6h)
+  --os-only        aggiorna solo il sistema operativo
+  --drivers-only   aggiorna solo i driver GPU
+  --miners-only    aggiorna solo i miner
+  -h, --help       mostra questo aiuto
+
+Variabili: DRY_RUN=1 mostra cosa farebbe senza modificare nulla.
+EOF
+}
+
 for arg in "$@"; do
     case "$arg" in
         --force)        FORCE=1 ;;
         --os-only)      DO_OS=1; DO_DRIVERS=0; DO_MINERS=0 ;;
         --drivers-only) DO_OS=0; DO_DRIVERS=1; DO_MINERS=0 ;;
         --miners-only)  DO_OS=0; DO_DRIVERS=0; DO_MINERS=1 ;;
-        *) die "Argomento sconosciuto: $arg" ;;
+        # Alias tollerati (messaggi storici usavano --miners/--os/--drivers).
+        --miners)       DO_OS=0; DO_DRIVERS=0; DO_MINERS=1 ;;
+        --os)           DO_OS=1; DO_DRIVERS=0; DO_MINERS=0 ;;
+        --drivers)      DO_OS=0; DO_DRIVERS=1; DO_MINERS=0 ;;
+        -h|--help)      usage; exit 0 ;;
+        *) usage >&2; die "Argomento sconosciuto: $arg" ;;
     esac
 done
 

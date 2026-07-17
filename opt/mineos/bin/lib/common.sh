@@ -230,9 +230,41 @@ apply_multigpu_grub_fix() {
     fi
 }
 
-# Confronta hardware (sysfs/lspci) vs driver (nvidia-smi); tenta fix automatici.
+# Elenca i bus PCI delle GPU NVIDIA NON supportate dal modulo caricato (una per
+# riga). Le riconosce dai messaggi NVRM in dmesg, es.:
+#   "NVRM: The NVIDIA GPU 0000:01:00.0 is not supported by nvidia.ko because it
+#    does not include System Processor (GSP)"  (modulo -open su Pascal/pre-Turing)
+nvidia_unsupported_gpus() {
+    command -v dmesg >/dev/null 2>&1 || return 0
+    dmesg 2>/dev/null \
+        | grep -iE 'NVRM:.*not supported by nvidia' \
+        | grep -oiE '[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9]' \
+        | tr 'A-F' 'a-f' | sort -u
+}
+
+# Riduce lo spam del kernel sulla CONSOLE (le GPU non supportate fanno ripetere
+# il messaggio NVRM all'infinito, rendendo tty1 inutilizzabile). Non tocca
+# journald/dmesg. Runtime (printk) + persistente (sysctl + GRUB loglevel).
+quiet_kernel_console() {
+    [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+    if [[ -w /proc/sys/kernel/printk ]]; then
+        echo "3 4 1 3" > /proc/sys/kernel/printk 2>/dev/null || true
+    fi
+    if [[ -d /etc/sysctl.d ]]; then
+        printf 'kernel.printk = 3 4 1 3\n' > /etc/sysctl.d/99-mineos-quiet.conf 2>/dev/null || true
+    fi
+    local grub="/etc/default/grub"
+    if [[ -f "$grub" ]] && ! grep -q 'loglevel=3' "$grub" 2>/dev/null; then
+        sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT=".*\)"/\1 loglevel=3"/' "$grub" 2>/dev/null || true
+        command -v update-grub >/dev/null 2>&1 && run update-grub >/dev/null 2>&1 || true
+    fi
+}
+
+# Confronta hardware (sysfs/lspci) vs driver (nvidia-smi), SCONTANDO le GPU non
+# supportate dal modulo (che e' ATTESO non siano visibili). Distingue quindi
+# "GPU non supportata" da "GPU che dovrebbe funzionare ma manca" (BUG8/BUG9).
 verify_nvidia_gpu_visibility() {
-    local pci_n=0 smi_n=0
+    local pci_n=0 smi_n=0 unsup_n=0 unsup_list expected
     pci_n="$(list_gpus_sysfs_pci | grep -c '^nvidia|' 2>/dev/null || true)"
     smi_n="$(list_gpus_nvidia_smi | wc -l)"
 
@@ -243,24 +275,49 @@ verify_nvidia_gpu_visibility() {
         return 0
     fi
 
-    if [[ "$pci_n" -gt 0 && "$smi_n" -gt 0 && "$pci_n" -gt "$smi_n" ]]; then
-        log WARN "MISMATCH GPU: hardware sysfs=${pci_n} NVIDIA, nvidia-smi=${smi_n}."
-        log WARN "GPU mancanti dal driver (es. RTX 3090 / GTX 1080 non in nvidia-smi -L)."
+    # GPU non supportate dal modulo caricato (es. Pascal con modulo -open).
+    unsup_list="$(nvidia_unsupported_gpus)"
+    unsup_n="$(printf '%s\n' "$unsup_list" | grep -c . 2>/dev/null || echo 0)"
+    if (( unsup_n > 0 )); then
+        log WARN "Rilevate ${unsup_n} GPU NON supportate dal modulo NVIDIA caricato: $(printf '%s' "$unsup_list" | tr '\n' ' ')"
+        log WARN "  E' ATTESO che il driver non le veda. TRADE-OFF: il modulo OPEN e' necessario per Blackwell (RTX 50xx)"
+        log WARN "  ma NON supporta Pascal/Maxwell e precedenti; il closed supporta Pascal ma NON le RTX 50xx."
+        log WARN "  open e closed non possono coesistere sullo stesso rig: scollega le GPU non supportate o cambia modulo."
+        # Ferma l'allagamento della console (NVRM ripetuto all'infinito).
+        quiet_kernel_console
+    fi
+
+    # GPU che ci si ASPETTA il driver veda = hardware totale meno le non supportate.
+    expected=$(( pci_n - unsup_n ))
+    (( expected < 0 )) && expected=0
+
+    # Caso 1: il driver vede almeno quante attese -> tutto ok (l'eventuale
+    # differenza pci_n>smi_n e' spiegata dalle GPU non supportate). Niente rescan.
+    if (( pci_n > 0 && smi_n >= expected )); then
+        log INFO "Visibilita' GPU OK: nvidia-smi=${smi_n} (attese=${expected}; ${unsup_n} non supportate escluse su ${pci_n} totali)."
+        return 0
+    fi
+
+    # Caso 2: mancano GPU che DOVREBBERO funzionare -> tenta rescan + fix BAR.
+    if (( pci_n > 0 && smi_n < expected )); then
+        log WARN "MISMATCH GPU: attese ${expected} visibili (hardware ${pci_n} - ${unsup_n} non supportate), ma nvidia-smi ne vede ${smi_n}."
         gpu_rescan_pci_bus
         apply_multigpu_grub_fix
         smi_n="$(list_gpus_nvidia_smi | wc -l)"
-        if [[ "$pci_n" -gt "$smi_n" ]]; then
-            log ERROR "Dopo rescan: ancora ${pci_n} GPU hardware vs ${smi_n} visibili al driver."
-            log ERROR "Controlla BIOS: Above 4G Decoding / Large BAR / Re-Size BAR attivi."
-            log ERROR "Verifica alimentazione/riser PCIe; poi: sudo reboot"
-            notify GPU_MISMATCH "GPU hardware=${pci_n} driver=${smi_n}. Abilita Above 4G in BIOS e reboot."
+        if (( smi_n < expected )); then
+            log ERROR "Dopo rescan: ${smi_n} visibili vs ${expected} attese."
+            log ERROR "Controlla BIOS: Above 4G Decoding / Resizable BAR attivi; verifica riser/alimentazione PCIe; poi: sudo reboot"
+            notify GPU_MISMATCH "GPU attese=${expected} ma driver ne vede ${smi_n}. Abilita Above 4G/Resizable BAR in BIOS e reboot."
         else
-            log INFO "Rescan PCI riuscito: nvidia-smi ora vede ${smi_n} GPU."
+            log INFO "Rescan PCI riuscito: nvidia-smi ora vede ${smi_n} GPU (attese ${expected})."
         fi
-    elif [[ "$pci_n" -eq 0 && "$smi_n" -gt 0 ]]; then
+        return 0
+    fi
+
+    if (( pci_n == 0 && smi_n > 0 )); then
         log INFO "nvidia-smi vede ${smi_n} GPU (sysfs_pci non ha enumerato, ok post-driver)."
     else
-        log INFO "Visibilita' GPU OK: sysfs_pci=${pci_n} nvidia-smi=${smi_n}."
+        log INFO "Visibilita' GPU OK: sysfs_pci=${pci_n} nvidia-smi=${smi_n} (non supportate=${unsup_n})."
     fi
 }
 

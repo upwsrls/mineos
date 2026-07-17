@@ -39,9 +39,30 @@ for arg in "$@"; do
     case "$arg" in
         --force)          FORCE=1 ;;
         --noninteractive) NONINTERACTIVE=1 ;;
-        *) die "Argomento sconosciuto: $arg" ;;
+        --help|-h)
+            cat <<'EOF'
+Uso: sudo first-boot-setup.sh [--force] [--noninteractive]
+  --force           riesegue anche se il first boot e' gia' completato
+  --noninteractive  non chiede nulla: usa i valori da env (KRX_USERNAME, ...)
+EOF
+            exit 0 ;;
+        *) die "Argomento sconosciuto: $arg (usa --help)" ;;
     esac
 done
+
+# BUG5: sopravvivere all'HUP. Se la console tty1 o la sessione SSH da cui e'
+# stato lanciato si chiude, il processo riceve SIGHUP e muore ("code=killed,
+# signal=HUP"), lasciando il setup a meta'. Ignoriamo SIGHUP: driver, miner e
+# config vengono completati comunque. La parte NON interattiva non dipende dal
+# terminale; il wizard interattivo ha timeout e default (vedi prompt_value).
+trap '' HUP
+
+# Se non c'e' un terminale su stdin (es. eseguito via SSH senza -t, o detach),
+# passiamo in modalita' non interattiva: niente prompt che si bloccano, si usano
+# i default/env e il setup arriva SEMPRE a scrivere i config.
+if [[ "$NONINTERACTIVE" -eq 0 ]] && ! [[ -t 0 ]]; then
+    NONINTERACTIVE=1
+fi
 
 DONE_FLAG="${MINEOS_STATE}/first-boot.done"
 
@@ -69,17 +90,20 @@ check_already_done() {
 }
 
 # Strumenti indispensabili. Installati se mancanti.
+# BUG7: SRBMiner usa OpenCL per enumerare le GPU -> servono l'ICD loader
+# (ocl-icd-libopencl1) e 'clinfo' (usato anche da gpu-health-check.sh). Senza,
+# il miner non vede le schede. Li includiamo qui e nell'autoinstall.
 ensure_base_tools() {
     local pm; pm="$(detect_pkg_mgr)"
-    local need=(curl tar gzip ca-certificates pciutils jq)
+    local need=(curl tar gzip ca-certificates pciutils jq ocl-icd-libopencl1 clinfo)
     log INFO "Verifica strumenti base ($pm)..."
     case "$pm" in
         apt)
             run apt-get update -y
             run env DEBIAN_FRONTEND=noninteractive apt-get install -y "${need[@]}"
             ;;
-        dnf)    run dnf install -y "${need[@]}" ;;
-        pacman) run pacman -Sy --noconfirm curl tar gzip ca-certificates pciutils jq ;;
+        dnf)    run dnf install -y curl tar gzip ca-certificates pciutils jq ocl-icd clinfo ;;
+        pacman) run pacman -Sy --noconfirm curl tar gzip ca-certificates pciutils jq ocl-icd clinfo ;;
         *) die "Package manager non supportato. Installa manualmente: ${need[*]}" ;;
     esac
 }
@@ -398,9 +422,41 @@ install_miners() {
 # ============================================================================
 # STEP 4 - Generazione file di config
 # ============================================================================
+# BUG4: prima si faceva 'cat > file <<EOF' e si loggava "creato" SENZA verificare
+# che il file esistesse davvero: se la scrittura falliva (dir mancante, errore
+# I/O, ecc.) il log diceva comunque "creato" e l'agent poi falliva in loop con
+# "Config mancante". Questo helper scrive, VERIFICA (file esistente e non vuoto),
+# riprova una volta, e ritorna non-zero con ERROR se non riesce.
+# Uso:  write_conf "$file" <<EOF ... EOF
+write_conf() {
+    local f="$1" content
+    content="$(cat)"   # contenuto dallo stdin (heredoc)
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    printf '%s\n' "$content" > "$f" 2>/dev/null || true
+    if [[ ! -s "$f" ]]; then
+        log WARN "Scrittura di ${f} non riuscita al primo tentativo: riprovo."
+        sync 2>/dev/null || true
+        printf '%s\n' "$content" > "$f" 2>/dev/null || true
+    fi
+    if [[ -s "$f" ]]; then
+        chmod 600 "$f" 2>/dev/null || true
+        return 0
+    fi
+    log ERROR "VERIFICA FALLITA: ${f} non esiste o e' vuoto dopo la scrittura."
+    log ERROR "  Stato cartella config: $(ls -ld "${MINEOS_CONFIG}" 2>&1)"
+    log ERROR "  Contenuto config: $(ls -la "${MINEOS_CONFIG}" 2>&1 | tr '\n' '|')"
+    return 1
+}
+
 write_configs() {
     local vendor="$1"
     umask 077
+    CONFIG_WRITE_FAILED=0
+
+    # Assicura la cartella config PRIMA di scrivere (causa tipica di scritture
+    # silenziosamente fallite: cartella assente/non scrivibile).
+    mkdir -p "${MINEOS_CONFIG}" 2>/dev/null || true
+    chmod 700 "${MINEOS_CONFIG}" 2>/dev/null || true
 
     # Valori di default per i campi non raccolti dal wizard (modalità robusta).
     : "${KRX_USERNAME:=CHANGE_ME}"
@@ -419,7 +475,7 @@ write_configs() {
     if [[ -f "${MINEOS_CONFIG}/wallet.conf" ]]; then
         log INFO "wallet.conf già presente: lo mantengo."
     else
-        cat > "${MINEOS_CONFIG}/wallet.conf" <<EOF
+        if write_conf "${MINEOS_CONFIG}/wallet.conf" <<EOF
 # mineOS - credenziali Kryptex (NON committare, NON condividere)
 KRX_USERNAME="${KRX_USERNAME}"
 KRX_WORKER="${KRX_WORKER}"
@@ -429,8 +485,11 @@ KRX_COIN="${KRX_COIN}"
 # Accedi a kryptex.com per consultare il saldo ed eseguire i prelievi a mano.
 PAYOUT_MODE="manual"
 EOF
-        chmod 600 "${MINEOS_CONFIG}/wallet.conf"
-        log INFO "wallet.conf creato (payout=manuale)."
+        then
+            log INFO "wallet.conf creato (payout=manuale)."
+        else
+            log ERROR "wallet.conf NON creato."; CONFIG_WRITE_FAILED=1
+        fi
     fi
 
     # --- pools.conf: endpoint stratum Kryptex (solo se mancante) -------------
@@ -438,7 +497,7 @@ EOF
         log INFO "pools.conf già presente: lo mantengo."
     else
         local pool_url; pool_url="$(kryptex_pool_url "${KRX_COIN}")"
-        cat > "${MINEOS_CONFIG}/pools.conf" <<EOF
+        if write_conf "${MINEOS_CONFIG}/pools.conf" <<EOF
 # mineOS - pool Kryptex per coin=${KRX_COIN} (payout manuale da dashboard)
 # Endpoint reale Kryptex (host:porta dipendono dal coin). Vedi pool.kryptex.com.
 POOL_URL="${pool_url}"
@@ -446,8 +505,11 @@ POOL_URL="${pool_url}"
 POOL_USER="${pool_user}"
 POOL_PASS="x"
 EOF
-        chmod 600 "${MINEOS_CONFIG}/pools.conf"
-        log INFO "pools.conf creato (pool=${pool_url} user=${pool_user})."
+        then
+            log INFO "pools.conf creato (pool=${pool_url} user=${pool_user})."
+        else
+            log ERROR "pools.conf NON creato."; CONFIG_WRITE_FAILED=1
+        fi
     fi
 
     # --- rig.conf: hardware, miner scelto, OC/limiti (solo se mancante) ------
@@ -464,7 +526,7 @@ EOF
         # in tal caso l'override prevale sul default per-vendor.
         local pref_miner; pref_miner="$(miner_for_algo "$algo")"
         [[ -n "$pref_miner" ]] && default_miner="$pref_miner"
-        cat > "${MINEOS_CONFIG}/rig.conf" <<EOF
+        if write_conf "${MINEOS_CONFIG}/rig.conf" <<EOF
 # mineOS - configurazione rig
 GPU_VENDOR="${vendor}"
 MINER="${default_miner}"            # trex | lolminer | srbminer (Pearl -> srbminer)
@@ -483,12 +545,27 @@ WATCHDOG_ZERO_GRACE_SEC="300"       # restart se sotto soglia per N secondi
 # Profit-switch automatico (richiede profit-switch.conf). true | false
 PROFIT_SWITCH="false"
 EOF
-        chmod 600 "${MINEOS_CONFIG}/rig.conf"
-        log INFO "rig.conf creato (miner=${default_miner})."
+        then
+            log INFO "rig.conf creato (miner=${default_miner})."
+        else
+            log ERROR "rig.conf NON creato."; CONFIG_WRITE_FAILED=1
+        fi
+    fi
+
+    # Verifica FINALE: i tre file indispensabili devono esistere e non essere vuoti.
+    local cf
+    for cf in wallet.conf pools.conf rig.conf; do
+        [[ -s "${MINEOS_CONFIG}/${cf}" ]] || { log ERROR "Config indispensabile mancante/vuota dopo la scrittura: ${cf}"; CONFIG_WRITE_FAILED=1; }
+    done
+
+    if [[ "${CONFIG_WRITE_FAILED}" -ne 0 ]]; then
+        log ERROR "Generazione config FALLITA (vedi sopra). L'agent non partira' finche' non sono presenti."
+        return 1
     fi
 
     log INFO "Configurazione pronta in ${MINEOS_CONFIG}."
     log WARN "Verifica POOL_URL in pools.conf con la dashboard Kryptex prima di minare."
+    return 0
 }
 
 # Copia template OC Pearl/pearlhash se assente.
@@ -644,6 +721,9 @@ main() {
     local vendor; vendor="$(detect_gpu_vendor)"
     log INFO "GPU vendor rilevato: ${vendor} (count nvidia=$(detect_gpu_count nvidia) amd=$(detect_gpu_count amd))"
 
+    # --- FASE NON INTERATTIVA (deve completare sempre, sopravvive all'HUP) ----
+    # driver + miner + dipendenze prima del wizard: se il wizard interattivo
+    # viene interrotto, il lavoro pesante e' gia' stato fatto.
     install_drivers "$vendor"
 
     # Se il driver NVIDIA e' gia' attivo (no reboot), verifica subito che tutte le GPU siano visibili.
@@ -651,11 +731,27 @@ main() {
         verify_nvidia_gpu_visibility
     fi
 
-    run_wizard
     install_miners "$vendor"
-    write_configs "$vendor"
-    setup_gpu_oc_config
 
+    # --- FASE INTERATTIVA (wizard credenziali; con timeout/default) -----------
+    run_wizard
+
+    # --- Scrittura config con VERIFICA (BUG4) --------------------------------
+    if ! write_configs "$vendor"; then
+        # Riprova una volta: la scrittura potrebbe essere fallita per una causa
+        # transitoria. Se fallisce ancora NON marchiamo il first-boot completato
+        # (cosi' verra' ritentato) ed usciamo non-zero.
+        log WARN "write_configs fallita: riprovo una volta."
+        if ! write_configs "$vendor"; then
+            log ERROR "Impossibile creare i file di config in ${MINEOS_CONFIG}. First boot NON completato: verra' ritentato al prossimo boot."
+            setup_gpu_oc_config
+            write_quickstart_summary
+            enable_services
+            return 1
+        fi
+    fi
+
+    setup_gpu_oc_config
     write_payout_summary
     write_quickstart_summary
 

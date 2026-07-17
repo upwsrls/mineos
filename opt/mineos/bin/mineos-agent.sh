@@ -146,11 +146,11 @@ find_miner_binary() {
         dir="$(find -L "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
     fi
     [[ -d "$dir" || -L "$dir" ]] \
-        || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners"
+        || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners-only"
 
     local bin
     bin="$(find_miner_binary_in_dir "$MINER" "$dir")" \
-        || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners"
+        || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners-only"
     echo "$bin"
 }
 

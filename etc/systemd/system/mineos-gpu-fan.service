@@ -4,8 +4,9 @@
 
 [Unit]
 Description=mineOS GPU fan curve daemon
+# Ordine soft: parte dopo OC/agent se ci sono, ma NON li richiede (niente Wants
+# che potrebbe accodare/attendere). Evita catene bloccanti verso mineos-gpu-oc.
 After=mineos-gpu-oc.service mineos-agent.service
-Wants=mineos-gpu-oc.service
 ConditionPathExists=/opt/mineos/state/first-boot.done
 
 [Service]
