@@ -32,13 +32,35 @@ source "${SCRIPT_DIR}/lib/common.sh"
 # ----------------------------------------------------------------------------
 FORCE=0
 DO_OS=1; DO_DRIVERS=1; DO_MINERS=1
+usage() {
+    cat <<'EOF'
+Uso: sudo update-mineos.sh [OPZIONI]
+
+Aggiorna in sicurezza OS, driver GPU e miner (con backup config e rollback).
+
+Opzioni:
+  --force          ignora la finestra "gia' aggiornato di recente" (6h)
+  --os-only        aggiorna solo il sistema operativo
+  --drivers-only   aggiorna solo i driver GPU
+  --miners-only    aggiorna solo i miner
+  -h, --help       mostra questo aiuto
+
+Variabili: DRY_RUN=1 mostra cosa farebbe senza modificare nulla.
+EOF
+}
+
 for arg in "$@"; do
     case "$arg" in
         --force)        FORCE=1 ;;
         --os-only)      DO_OS=1; DO_DRIVERS=0; DO_MINERS=0 ;;
         --drivers-only) DO_OS=0; DO_DRIVERS=1; DO_MINERS=0 ;;
         --miners-only)  DO_OS=0; DO_DRIVERS=0; DO_MINERS=1 ;;
-        *) die "Argomento sconosciuto: $arg" ;;
+        # Alias tollerati (messaggi storici usavano --miners/--os/--drivers).
+        --miners)       DO_OS=0; DO_DRIVERS=0; DO_MINERS=1 ;;
+        --os)           DO_OS=1; DO_DRIVERS=0; DO_MINERS=0 ;;
+        --drivers)      DO_OS=0; DO_DRIVERS=1; DO_MINERS=0 ;;
+        -h|--help)      usage; exit 0 ;;
+        *) usage >&2; die "Argomento sconosciuto: $arg" ;;
     esac
 done
 
@@ -160,6 +182,7 @@ update_nvidia_driver() {
         *) log WARN "Update driver NVIDIA non supportato su $pm." ;;
     esac
     # Il modulo nuovo si carica solo dopo reboot.
+    apply_nvidia_boot_fix
     mark_reboot_required
 }
 
@@ -210,23 +233,10 @@ smoke_test_miner() {
     fi
     [[ -d "$dir" ]] || { log WARN "Cartella miner inesistente per $name: $dir"; return 1; }
 
-    # Selezione binario robusta: prima i nomi noti, poi fallback al primo
-    # eseguibile. '-print -quit' evita la fragilità di 'find | head' (SIGPIPE
-    # con pipefail) e si ferma al primo risultato.
-    local -a candidates=()
-    case "$name" in
-        trex)     candidates=(t-rex T-Rex) ;;
-        lolminer) candidates=(lolMiner lolminer) ;;
-        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
-    esac
-    local bin="" cand
-    for cand in "${candidates[@]}"; do
-        [[ -x "${dir}/${cand}" ]] && { bin="${dir}/${cand}"; break; }
-    done
-    if [[ -z "$bin" ]]; then
-        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
-    fi
-    [[ -n "$bin" ]] || { log WARN "Nessun binario eseguibile trovato in $dir per $name."; return 1; }
+    # Selezione binario robusta via libreria condivisa.
+    local bin
+    bin="$(find_miner_binary_in_dir "$name" "$dir")" \
+        || { log WARN "Nessun binario eseguibile trovato in $dir per $name."; return 1; }
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         log INFO "DRY_RUN: salto smoke-test di $name."
         return 0

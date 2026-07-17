@@ -8,7 +8,12 @@
 Description=mineOS first boot setup (rilevamento GPU, driver, wizard, miner)
 # Serve rete per scaricare driver e miner.
 Wants=network-online.target
-After=network-online.target
+# GUARDIA ANTI-BLOCCO: l'installazione driver parte DOPO che SSH e Tailscale sono
+# gia' su, cosi' il rig resta raggiungibile anche se il driver NVIDIA si pianta.
+# NB: e' solo un ORDINE (After), non un requisito bloccante per ssh/tailscaled:
+# quei servizi NON dipendono da questo e partono comunque.
+Wants=ssh.service
+After=network-online.target ssh.service tailscaled.service
 # Non rieseguire se il setup è già stato completato.
 ConditionPathExists=!/opt/mineos/state/first-boot.done
 
@@ -26,8 +31,13 @@ StandardError=journal+console
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
-# Niente restart automatico: se fallisce vogliamo intervenire manualmente.
-TimeoutStartSec=0
+# Timeout BOUNDED (non 0/infinito): se il setup driver si appende, il servizio
+# viene interrotto e il sistema raggiunge comunque multi-user.target con SSH
+# attivo. Le operazioni apt/dkms hanno inoltre timeout espliciti nello script.
+TimeoutStartSec=3600
+# Un fallimento del setup NON deve propagarsi: il boot prosegue comunque.
+SuccessExitStatus=0 1
+# Niente restart automatico: se fallisce vogliamo intervenire manualmente via SSH.
 
 [Install]
 WantedBy=multi-user.target

@@ -15,10 +15,16 @@ opt/mineos/config/*.conf
 !opt/mineos/config/*.conf.example
 
 # --- Dati di runtime -------------------------------------------------------
-opt/mineos/logs/
+# La cartella logs/ deve esistere nel payload (l'agent vi scrive): versioniamo
+# solo il .gitkeep, ignorando i log reali.
+opt/mineos/logs/*
+!opt/mineos/logs/.gitkeep
 opt/mineos/state/
 opt/mineos/miners/
 opt/mineos/backups/
+
+# Auth key Tailscale (segreta): NON committare.
+opt/mineos/config/tailscale.key
 
 # --- Log generici ----------------------------------------------------------
 *.log

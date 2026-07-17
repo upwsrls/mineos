@@ -42,11 +42,51 @@ autoinstall:
     install-server: true
     allow-pw: true
 
-  # --- Storage: installazione su tutto il disco (LVM disattivato) ----------
-  # 'direct' usa l'intero disco senza LVM: piu' semplice per un rig single-disk.
+  # --- Pulizia disco PRIMA del partizionamento -----------------------------
+  # Cause tipiche di crash autoinstall + "disk full" su rig gia' usati:
+  #   - firme/superblock residui (LVM, mdraid, vecchie partizioni) che fanno
+  #     fallire curtin durante il partizionamento;
+  #   - selezione del disco sbagliato (USB o disco piccolo) come target.
+  # Qui azzeriamo firme e tabella partizioni SUL DISCO INTERNO PIU' GRANDE,
+  # ESCLUDENDO esplicitamente il supporto USB di avvio (quello che monta /cdrom).
+  early-commands:
+    - |
+      set -x
+      # Disco di boot (USB live): quello che contiene /cdrom.
+      boot_src="$(findmnt -no SOURCE /cdrom 2>/dev/null || true)"
+      boot_disk="$(lsblk -no PKNAME "$boot_src" 2>/dev/null | head -1 || true)"
+      # Disco target = il piu' grande che NON sia l'USB di boot.
+      target="$(lsblk -bdno NAME,SIZE,TYPE \
+                | awk '$3=="disk"{print $1" "$2}' \
+                | { [ -n "$boot_disk" ] && grep -v "^${boot_disk} " || cat; } \
+                | sort -k2 -n | tail -1 | awk '{print $1}')"
+      if [ -n "$target" ] && [ "$target" != "$boot_disk" ]; then
+        echo "[mineos-early] Azzero firme/partizioni su /dev/$target (boot USB: ${boot_disk:-?})"
+        swapoff -a || true
+        # Disattiva eventuali LVM/mdraid che tengono occupato il disco.
+        vgchange -an 2>/dev/null || true
+        mdadm --stop --scan 2>/dev/null || true
+        wipefs -a "/dev/$target" 2>/dev/null || true
+        sgdisk --zap-all "/dev/$target" 2>/dev/null || true
+        # Azzera l'inizio del disco (GPT primaria + eventuali header residui).
+        dd if=/dev/zero of="/dev/$target" bs=1M count=32 oflag=direct 2>/dev/null || true
+        partprobe "/dev/$target" 2>/dev/null || true
+      else
+        echo "[mineos-early] Nessun disco target sicuro trovato: salto wipe."
+      fi
+
+  # --- Storage: layout automatico affidabile di Ubuntu ---------------------
+  # 'layout: direct' lascia a subiquity il partizionamento: rileva da solo la
+  # modalita' di boot (UEFI o BIOS legacy) e crea la partizione bootloader
+  # CORRETTA per quella modalita'. Un partizionamento manuale con SIA bios_grub
+  # SIA ESP fa fallire subiquity con "autoinstall config did not create needed
+  # bootloader partition". La pulizia del disco e' gia' garantita dagli
+  # early-commands sopra (wipefs/sgdisk/dd sul disco interno piu' grande).
   storage:
     layout:
       name: direct
+    swap:
+      size: 0
 
   # --- Pacchetti minimi necessari gia' in fase di installazione ------------
   packages:
@@ -56,6 +96,11 @@ autoinstall:
     - ca-certificates
     - pciutils
     - jq
+    # SSH garantito nell'immagine (gestione remota headless).
+    - openssh-server
+    # OpenCL: SRBMiner ne ha bisogno per vedere le GPU (ICD loader + clinfo).
+    - ocl-icd-libopencl1
+    - clinfo
 
   # Aggiornamenti durante l'installer: solo pocket -security (il resto lo
   # gestisce update-mineos.sh sul sistema installato).

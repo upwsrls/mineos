@@ -1,0 +1,57 @@
+# mineOS - gpu-oc.conf (TEMPLATE)
+# Copia in gpu-oc.conf e adatta. Profili ottimizzati per Pearl (pearlhash) 24/7 su Kryptex.
+# Il file reale NON va committato (vedi .gitignore).
+
+# Abilita applicazione automatica OC (mineos-gpu-oc.service + mineos-agent).
+GPU_AUTO_OC="true"
+
+# Daemon ventole: regola fan speed in base a temperatura (curva per GPU).
+FAN_DAEMON="true"
+FAN_POLL_SEC="15"
+
+# Algoritmo attivo (informativo; profili ottimizzati per pearlhash).
+OC_ALGO="pearlhash"
+
+# --- Profili per modello GPU (match su nome nvidia-smi) ----------------------
+# pearlhash e' COMPUTE-BOUND: comanda il CORE CLOCK (lasciato in BOOST libero),
+# la memoria e' irrilevante. mineOS NON locka MAI il core (il lock dimezza
+# l'hashrate: misurato 92 TH/s vs 211 TH/s su RTX 5080) e NON tocca la memoria.
+# Gestisce SOLO il power limit + la curva ventole.
+#
+# Formato riga (i campi CORE_MHZ/MEM_OFFSET restano per compatibilita' ma sono
+# SEMPRE 0 e NON applicati):
+#   MODEL_KEY|PL_W|CORE_MHZ|MEM_OFFSET_MHZ|TEMP_TARGET|FAN_MIN|FAN_MAX|TEMP_LO|TEMP_HI
+#
+#   MODEL_KEY       chiave match. Il matching e' robusto: rtx_5080, rtx_50xx,
+#                   gtx_1660_super, gtx_16xx, ... con fallback per generazione.
+#   PL_W            power limit Watt. 0 = lascia il default del driver (NON forzare:
+#                   valori troppo bassi vengono rifiutati, es. 100W su RTX 5080).
+#                   Se impostato viene clampato tra min/max consentiti dalla scheda.
+#   CORE_MHZ        (ignorato) 0 = core libero/boost. NON usare il lock su pearlhash.
+#   MEM_OFFSET_MHZ  (ignorato) 0 = memoria stock.
+#   TEMP_TARGET     temperatura target °C (watchdog + fan curve)
+#   FAN_MIN/MAX     % ventola min/max sulla curva
+#   TEMP_LO/HI      °C inizio/fine rampa ventola
+#
+# Valori PL da misure sul campo (pearlhash/SRBMiner). Calibra sul tuo rig.
+PROFILES=(
+  "rtx_5090|450|0|0|70|40|100|55|75"
+  "rtx_5080|360|0|0|69|40|100|55|74"
+  "rtx_5070|250|0|0|68|40|100|54|72"
+  "rtx_50xx|300|0|0|70|40|100|55|75"
+  "rtx_4090|350|0|0|66|40|100|52|72"
+  "rtx_4080|300|0|0|66|40|100|52|72"
+  "rtx_4070|200|0|0|64|40|100|50|70"
+  "rtx_40xx|280|0|0|66|40|100|52|72"
+  "rtx_3090|350|0|0|72|45|100|58|76"
+  "rtx_3080|300|0|0|70|45|100|56|74"
+  "rtx_30xx|300|0|0|70|45|100|56|74"
+  "gtx_1660_super|65|0|0|62|35|95|48|68"
+  "gtx_1660_ti|65|0|0|62|35|95|48|68"
+  "gtx_1660|60|0|0|62|35|95|48|68"
+  "gtx_16xx|65|0|0|62|35|95|48|68"
+  "gtx_1080_ti|180|0|0|68|40|100|54|72"
+  "gtx_1080|150|0|0|66|40|100|52|70"
+  "gtx_10xx|150|0|0|66|40|100|52|70"
+  "default|0|0|0|70|40|100|55|78"
+)

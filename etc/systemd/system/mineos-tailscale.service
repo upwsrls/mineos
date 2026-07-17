@@ -1,0 +1,21 @@
+# /etc/systemd/system/mineos-tailscale.service
+#
+# Attiva Tailscale a ogni boot SE presente una auth key in
+# /opt/mineos/config/tailscale.key. Idempotente: se gia' connesso non fa nulla,
+# se la chiave manca esce senza errori. NON blocca mai il boot.
+
+[Unit]
+Description=mineOS Tailscale auto-up (auth key -> tailscale up)
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+# Best effort: non e' un requisito per il resto del sistema.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/mineos/bin/tailscale-up.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

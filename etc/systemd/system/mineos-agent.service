@@ -14,24 +14,35 @@ Wants=network-online.target
 # la fa lo script (mineos-agent.sh), con un errore chiaro se manca.
 After=network-online.target mineos-firstboot.service
 # NESSUNA condizione bloccante: né su first-boot.done né su reboot-required.
-# Evita loop di restart troppo aggressivi (direttive di sezione [Unit]).
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# BUG10 FIX: con un errore di config TRANSITORIO il vecchio limite (5 restart /
+# 300s) portava a "start request repeated too quickly" e lasciava l'agent FAILED
+# finche' non si faceva 'reset-failed' a mano. Allarghiamo molto la finestra:
+# fino a 30 tentativi in 30 min, cosi' il rig si auto-recupera. Con RestartSec=30
+# (sotto) sono ~15 min di tentativi prima di eventuale stop: piu' che sufficienti
+# per superare errori transitori senza restare fermi.
+StartLimitIntervalSec=1800
+StartLimitBurst=30
 
 [Service]
 Type=simple
 # cwd scrivibile: con ProtectSystem=strict la '/' è read-only e alcuni miner
 # scrivono file di log/temp nella cartella corrente (uscirebbero con errore).
 WorkingDirectory=/opt/mineos/state
+# Garantisce l'esistenza della cartella log/stato PRIMA dell'avvio (l'agent vi
+# scrive; con ProtectSystem=strict la '/' e' read-only ma /opt/mineos/logs e'
+# in ReadWritePaths). Idempotente; il prefisso '-' rende i passi non fatali.
+ExecStartPre=-/bin/mkdir -p /opt/mineos/logs /opt/mineos/state
+ExecStartPre=-/bin/chown miner:miner /opt/mineos/logs
+ExecStartPre=-/bin/chmod 0755 /opt/mineos/logs
 # Al primo avvio dopo un reboot pianificato (driver/kernel nuovi) rimuoviamo il
 # flag: il riavvio e' avvenuto, quindi non deve piu' frenare nulla.
-# Il prefisso '-' rende il passo non fatale se il flag non esiste.
 ExecStartPre=-/bin/rm -f /opt/mineos/state/reboot-required
 # Il miner gira in foreground; questo wrapper fa "exec" del binario scelto.
-ExecStart=/opt/mineos/bin/mineos-agent.sh
-# Riavvio robusto: se il miner crasha, riparte.
+ExecStart=/bin/bash /opt/mineos/bin/mineos-agent.sh
+# Riavvio robusto: se il miner crasha, riparte. RestartSec un po' piu' alto per
+# non "bruciare" i tentativi su errori transitori (vedi StartLimit sopra).
 Restart=always
-RestartSec=15
+RestartSec=30
 # Il mining è CPU/GPU intensivo: priorità I/O bassa per non affamare il sistema.
 Nice=5
 # Log su journald (consultabile con: journalctl -u mineos-agent -f).

@@ -22,6 +22,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
+# La cartella log DEVE esistere: mineos-agent scrive qui (idempotente allo startup,
+# oltre alla creazione nel payload/tarball e all'ExecStartPre della unit).
+mkdir -p "${MINEOS_LOGS}" "${MINEOS_STATE}" 2>/dev/null || true
+chown miner:miner "${MINEOS_LOGS}" 2>/dev/null || true
+chmod 0755 "${MINEOS_LOGS}" 2>/dev/null || true
+
 # Porte API locali (una per miner; sempre bind su loopback).
 API_PORT_TREX=4067
 API_PORT_LOL=4068
@@ -68,6 +74,11 @@ load_all_conf() {
     ALGO="$(normalize_algo "$ALGO")"
     [[ "$algo_in" != "$ALGO" ]] && log WARN "Algoritmo '${algo_in}' normalizzato in '${ALGO}'."
 
+    # Pearl/pearlhash richiede SRBMiner: corregge rig.conf scritti con MINER=trex.
+    local miner_in="$MINER"
+    MINER="$(resolve_miner_for_algo "$MINER" "$ALGO")"
+    [[ "$miner_in" != "$MINER" ]] && log WARN "Miner '${miner_in}' incompatibile con '${ALGO}': uso '${MINER}'."
+
     log INFO "Config caricata: miner=$MINER algo=$ALGO pool=$POOL_URL user=$POOL_USER payout=${PAYOUT_MODE} (prelievi dalla dashboard Kryptex)"
 }
 
@@ -82,7 +93,17 @@ pool_hostport() {
 # ----------------------------------------------------------------------------
 apply_nvidia_tuning() {
     command -v nvidia-smi >/dev/null || return 0
-    # Abilita persistence mode per stabilità 24/7.
+    local oc_script="${MINEOS_BIN}/apply-gpu-oc.sh"
+    if [[ -x "$oc_script" && -f "${MINEOS_CONFIG}/gpu-oc.conf" ]]; then
+        # shellcheck disable=SC1090
+        source "${MINEOS_CONFIG}/gpu-oc.conf" 2>/dev/null || true
+        if [[ "${GPU_AUTO_OC:-false}" == "true" ]]; then
+            log INFO "OC NVIDIA: delego a apply-gpu-oc.sh (profili Pearl/pearlhash)."
+            run bash "$oc_script" || log WARN "apply-gpu-oc.sh fallito (proseguo mining)."
+            return 0
+        fi
+    fi
+    # Fallback: tuning base da rig.conf (senza gpu-oc.conf).
     run nvidia-smi -pm 1 || log WARN "nvidia-smi -pm 1 fallito."
     if [[ "${GPU_POWER_LIMIT_W}" != "0" ]]; then
         log INFO "Imposto power limit NVIDIA a ${GPU_POWER_LIMIT_W}W"
@@ -120,48 +141,40 @@ find_miner_binary() {
     local base="${MINEOS_MINERS}/${MINER}"
     local dir; dir="$(miner_dir)"
 
-    # 'current' è un symlink alla versione attiva. BUG STORICO: 'find <symlink>'
-    # in modalità -P (default) NON entra nella cartella puntata, quindi non
-    # trovava mai il binario -> die -> exit 1. Risolviamo prima il symlink.
-    if [[ -e "$dir" || -L "$dir" ]]; then
-        dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
-    fi
     # Fallback: se 'current' manca o è rotto, usa la versione più recente.
-    if [[ ! -d "$dir" ]]; then
+    if [[ ! -e "$dir" && ! -L "$dir" ]]; then
         dir="$(find -L "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
     fi
-    [[ -d "$dir" ]] || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners"
+    [[ -d "$dir" || -L "$dir" ]] \
+        || die "Miner '$MINER' non installato (manca ${base}). Esegui: update-mineos.sh --miners-only"
 
-    # Nomi binario noti per ciascun miner (i tar non sono uniformi su maiuscole).
-    local -a candidates=()
-    case "$MINER" in
-        trex)     candidates=(t-rex T-Rex) ;;
-        lolminer) candidates=(lolMiner lolminer) ;;
-        srbminer) candidates=(SRBMiner-MULTI SRBMiner-Multi srbminer) ;;
-    esac
-
-    local bin="" name
-    for name in "${candidates[@]}"; do
-        if [[ -f "${dir}/${name}" ]]; then
-            # Auto-fix permessi: se il binario c'è ma non è eseguibile, +x.
-            [[ -x "${dir}/${name}" ]] || chmod +x "${dir}/${name}" 2>/dev/null || true
-            [[ -x "${dir}/${name}" ]] && { bin="${dir}/${name}"; break; }
-        fi
-    done
-    # Fallback robusto: primo file regolare eseguibile nella cartella.
-    # '-print -quit' evita SIGPIPE/pipefail di 'find | head'.
-    if [[ -z "$bin" ]]; then
-        bin="$(find -L "$dir" -maxdepth 1 -type f -perm -u+x -print -quit 2>/dev/null)"
-    fi
-
-    [[ -n "$bin" && -x "$bin" ]] \
-        || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners"
+    local bin
+    bin="$(find_miner_binary_in_dir "$MINER" "$dir")" \
+        || die "Binario del miner '$MINER' non trovato/eseguibile in ${dir}. Reinstalla con: update-mineos.sh --miners-only"
     echo "$bin"
 }
 
 # ----------------------------------------------------------------------------
 # Costruzione argomenti per miner + scrittura agent.env per il watchdog
 # ----------------------------------------------------------------------------
+# Calcola gli id GPU SANI (inizializzati dal driver) tramite l'helper di health
+# check. Popola la variabile globale GPU_IDS (CSV, es. "0,1,3"). Se l'helper non
+# c'e' o non trova nulla, GPU_IDS resta vuota e il miner usa l'enumerazione di
+# default. Non fa mai fallire l'avvio (una GPU rotta non deve bloccare il mining).
+compute_healthy_gpu_ids() {
+    GPU_IDS=""
+    local helper="${SCRIPT_DIR}/gpu-health-check.sh"
+    [[ -x "$helper" ]] || helper="/opt/mineos/bin/gpu-health-check.sh"
+    if [[ -f "$helper" ]]; then
+        GPU_IDS="$(bash "$helper" 2>/dev/null || true)"
+    fi
+    if [[ -n "$GPU_IDS" ]]; then
+        log INFO "GPU sane selezionate per il miner: [${GPU_IDS}] (le GPU in errore vengono escluse)."
+    else
+        log WARN "Nessuna device-list GPU sana: uso l'enumerazione di default del miner."
+    fi
+}
+
 build_args() {
     local hostport; hostport="$(pool_hostport)"
     case "$MINER" in
@@ -176,6 +189,8 @@ build_args() {
                 # Riavvio interno disattivato: la gestione restart la fa systemd/watchdog.
                 --no-watchdog
             )
+            # Solo le GPU sane (una scheda in RmInitAdapter non blocca le altre).
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( -d "$GPU_IDS" )
             ;;
         lolminer)
             API_PORT="$API_PORT_LOL"; API_TYPE="lolminer"
@@ -186,6 +201,7 @@ build_args() {
                 --pass "$POOL_PASS"
                 --apiport "$API_PORT"
             )
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( --devices "$GPU_IDS" )
             ;;
         srbminer)
             API_PORT="$API_PORT_SRB"; API_TYPE="srbminer"
@@ -200,6 +216,9 @@ build_args() {
                 --api-enable
                 --api-port "$API_PORT"
             )
+            # Passa esplicitamente solo le GPU sane: se una Blackwell/rotta va in
+            # RmInitAdapter, SRBMiner mina comunque sulle altre invece di abortire.
+            [[ -n "${GPU_IDS:-}" ]] && MINER_ARGS+=( --gpu-id "$GPU_IDS" )
             ;;
         *) die "Miner non supportato: $MINER" ;;
     esac
@@ -250,6 +269,9 @@ main() {
     mkdir -p "${MINEOS_STATE}" "${MINEOS_LOGS}" 2>/dev/null || true
     load_all_conf
     apply_tuning
+    # Isola le GPU in errore PRIMA di costruire gli args: il miner riceve solo
+    # gli id delle GPU sane, cosi' una scheda difettosa non blocca tutte le altre.
+    compute_healthy_gpu_ids
     build_args
 
     local bin; bin="$(find_miner_binary)"

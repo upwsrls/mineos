@@ -16,6 +16,8 @@ mineOS trasforma un PC con GPU NVIDIA o AMD in un rig di mining headless, stabil
 - [Build dell'ISO](#build-delliso)
 - [Flash su USB](#flash-su-usb)
 - [Primo avvio e configurazione](#primo-avvio-e-configurazione)
+- [Primi passi dopo l'installazione](#primi-passi-dopo-linstallazione)
+- [Fix su rig già installato (Pearl)](#fix-su-rig-già-installato-pearl)
 - [Aggiornamenti](#aggiornamenti)
 - [Gestione e comandi utili](#gestione-e-comandi-utili)
 - [Notifiche Telegram](#notifiche-telegram)
@@ -100,6 +102,8 @@ mineos/
 │   │   ├── first-boot-setup.sh       # setup primo avvio (driver, wizard, miner)
 │   │   ├── update-mineos.sh          # updater con rollback
 │   │   ├── mineos-agent.sh           # avvia il miner
+│   │   ├── fix-rig-pearl.sh          # fix one-shot su rig già installati
+│   │   ├── fix-nvidia-boot.sh        # fix boot i2c/ucsi_ccg NVIDIA
 │   │   └── watchdog.sh               # monitoraggio 24/7
 │   ├── config/                       # rig.conf, wallet.conf, pools.conf (chmod 700)
 │   ├── miners/                       # binari miner versionati + symlink "current"
@@ -125,6 +129,7 @@ mineos/
 | `wallet.conf` | `KRX_USERNAME`, `KRX_WORKER`, `KRX_COIN`, `PAYOUT_MODE` (`manual`) |
 | `pools.conf`  | `POOL_URL`, `POOL_USER`, `POOL_PASS`                  |
 | `rig.conf`    | vendor GPU, miner, algoritmo, limiti termici/potenza, soglie watchdog |
+| `gpu-oc.conf` | profili overclock per modello GPU (power/clock/ventole) |
 
 ---
 
@@ -159,6 +164,7 @@ openssl passwd -6 'LaTuaPasswordSicura'
   (es. `prl:7048`, `rvn:7031`, `etc:7033`, `erg:7021`, `kas:7011`).
 - **Pearl (PRL)**: di default mineOS mina **Pearl** (`prl`, algoritmo `pearlhash`) con
   **SRBMiner-MULTI** (selezionato automaticamente per `pearlhash` su NVIDIA/AMD).
+  T-Rex **non** supporta `pearlhash`: non impostare `MINER="trex"` per Pearl.
 - **Payout MANUALE**: mineOS **non** automatizza payout né conversioni. Il saldo si accumula
   sul tuo account Kryptex e i prelievi si eseguono **a mano dalla dashboard** `kryptex.com`
   (`PAYOUT_MODE="manual"` in `wallet.conf`; riepilogo in `state/payout.txt`).
@@ -168,7 +174,6 @@ openssl passwd -6 'LaTuaPasswordSicura'
 Dalla root del progetto puoi usare il Makefile:
 
 ```bash
-make iso        # genera l'ISO (scarica l'ISO Ubuntu se assente)
 make rebuild    # rebuild pulito: clean + payload + iso (consigliato dopo modifiche)
 ```
 
@@ -178,13 +183,13 @@ Oppure direttamente lo script:
 cd mineos/build
 ./build-iso.sh
 # Scarica l'ISO ufficiale Ubuntu (se assente), inietta tutto e produce:
-#   mineos-24.04.2-autoinstall-amd64.iso
+#   mineos-24.04.3-autoinstall-amd64.iso
 ```
 
 Se hai già l'ISO ufficiale:
 
 ```bash
-./build-iso.sh /percorso/ubuntu-24.04.2-live-server-amd64.iso
+./build-iso.sh /percorso/ubuntu-24.04.3-live-server-amd64.iso
 ```
 
 ---
@@ -197,7 +202,7 @@ Se hai già l'ISO ufficiale:
 
 ```bash
 lsblk                      # individua il DISCO USB (es. /dev/sdb), non una partizione
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
 sync
 ```
 
@@ -206,7 +211,7 @@ sync
 ```bash
 diskutil list                          # individua /dev/diskN
 diskutil unmountDisk /dev/diskN
-sudo dd if=mineos-24.04.2-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/rdiskN bs=4m
 ```
 
 In alternativa puoi usare strumenti grafici come **balenaEtcher**.
@@ -241,6 +246,114 @@ journalctl -u mineos-agent -f          # log live del miner
 ```
 
 Controlla poi che il **worker** compaia online nella dashboard Kryptex.
+
+---
+
+## Primi passi dopo l'installazione
+
+Appena mineOS ha finito il setup, questi sono i comandi essenziali (disponibili
+anche in `/opt/mineos/state/quickstart.txt` e come promemoria a ogni login).
+
+### 1. Verifica che stia minando
+
+```bash
+systemctl status mineos-agent        # il miner deve essere "active (running)"
+journalctl -u mineos-agent -f        # log live: share accettate, pool
+```
+
+Poi apri [kryptex.com](https://kryptex.com) e controlla che il **worker** sia **online**.
+
+### 2. Controlla hashrate e temperature
+
+```bash
+nvidia-smi                                   # temp, potenza, utilizzo per GPU
+cat /opt/mineos/state/gpu-inventory.txt      # elenco GPU rilevate
+systemctl status mineos-gpu-fan              # curva ventole attiva
+```
+
+### 3. Metti in sicurezza il rig
+
+```bash
+passwd                               # CAMBIA subito la password (default: miner/miner)
+```
+
+### 4. Personalizza (opzionale)
+
+```bash
+sudo nano /opt/mineos/config/pools.conf    # coin/pool/worker Kryptex
+sudo nano /opt/mineos/config/rig.conf      # miner, algoritmo, limiti termici
+sudo nano /opt/mineos/config/gpu-oc.conf   # power limit, clock, ventole
+sudo systemctl restart mineos-agent        # applica le modifiche
+```
+
+### 5. Aggiorna quando vuoi
+
+```bash
+sudo /opt/mineos/bin/update-mineos.sh      # OS + driver + miner, con rollback
+```
+
+> Tabella riassuntiva dei comandi:
+
+| Cosa vuoi fare | Comando |
+|----------------|---------|
+| Stato miner | `systemctl status mineos-agent` |
+| Log live | `journalctl -u mineos-agent -f` |
+| Temperature/GPU | `nvidia-smi` |
+| Riavvia miner | `sudo systemctl restart mineos-agent` |
+| Guida rapida | `cat /opt/mineos/state/quickstart.txt` |
+
+> **Nessuna fee.** mineOS non applica alcun costo né dev fee: **mini il 100% per te**.
+> Gli unici prelievi eventuali sono quelli dei miner di terze parti secondo le loro
+> licenze (es. SRBMiner ha una propria devfee nativa, indipendente da mineOS).
+
+---
+
+## Fix su rig già installato (Pearl)
+
+Se il rig ha già mineOS ma il mining non parte (errori storici: binario trex, estrazione
+vuota, algoritmo `PRL` invece di `pearlhash`, permessi, servizio 203/EXEC), usa lo
+script di fix one-shot **senza reinstallare l'ISO**:
+
+```bash
+# Con credenziali Kryptex (consigliato)
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh
+
+# Se i miner sono corrotti/mancanti, forza reinstall
+sudo KRX_USERNAME="krxXXXXXX" KRX_WORKER="nome-worker" \
+  /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
+
+Lo script corregge automaticamente:
+
+| Problema | Fix applicato |
+|----------|---------------|
+| `203/EXEC` su first-boot/agent | `chmod +x` su tutti gli script; servizi via `/bin/bash` |
+| Cartella miner vuota (tar flat T-Rex) | Re-estrazione robusta + symlink `current` |
+| `MINER=trex` con Pearl | Imposta `MINER=srbminer` + `ALGO=pearlhash` |
+| Pool/wallet errati | `prl.kryptex.network:7048`, `krxXXXXXX.worker` |
+| Agent inattivo | Riavvio `mineos-agent` + `mineos-watchdog` |
+
+Verifica dopo il fix:
+
+```bash
+systemctl status mineos-agent
+journalctl -u mineos-agent -f
+ls -la /opt/mineos/miners/srbminer/current/
+```
+
+Se hai aggiornato i file mineOS sul repo locale e vuoi propagarli sul rig senza
+reinstallare l'ISO:
+
+```bash
+# Sul PC di build (Linux)
+make payload
+scp dist/mineos-payload.tar.gz miner@IP-RIG:/tmp/
+
+# Sul rig
+sudo tar -xzf /tmp/mineos-payload.tar.gz -C /
+sudo bash /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners
+```
 
 ---
 
@@ -314,6 +427,38 @@ Modifica i file in `/opt/mineos/config/` e riavvia l'agent:
 sudo nano /opt/mineos/config/rig.conf      # MINER, ALGO, limiti termici/potenza
 sudo nano /opt/mineos/config/pools.conf    # POOL_URL, POOL_USER
 sudo systemctl restart mineos-agent
+```
+
+### Overclock automatico (Pearl / pearlhash)
+
+Profili per rig eterogenei (RTX 3090, GTX 1080 Ti, GTX 1080, GTX 1660 Ti/Super/1660):
+
+```bash
+# Copia e personalizza profili
+sudo cp /opt/mineos/config/gpu-oc.conf.example /opt/mineos/config/gpu-oc.conf
+sudo nano /opt/mineos/config/gpu-oc.conf
+
+# Applica subito (power limit, core/mem lock, curva ventole)
+sudo /opt/mineos/bin/apply-gpu-oc.sh
+
+# Anteprima senza modificare
+sudo /opt/mineos/bin/apply-gpu-oc.sh --dry-run
+
+# Ripristina default NVIDIA
+sudo /opt/mineos/bin/apply-gpu-oc.sh --reset
+```
+
+Ogni GPU riceve il profilo in base al nome (`nvidia-smi`). Servizi systemd:
+
+- `mineos-gpu-oc.service` — OC al boot (prima del miner)
+- `mineos-gpu-fan.service` — curva ventole continua (TEMP_LO..TEMP_HI → FAN_MIN..FAN_MAX)
+
+Verifica:
+
+```bash
+systemctl status mineos-gpu-oc mineos-gpu-fan
+nvidia-smi --query-gpu=index,name,power.limit,clocks.current.graphics,clocks.current.memory,temperature.gpu,fan.speed --format=csv
+cat /opt/mineos/state/gpu-oc-0.env
 ```
 
 ---
@@ -501,6 +646,37 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 
 ---
 
+## Compatibilità hardware e piattaforma (note dal campo)
+
+### Driver open vs closed: un TRADE-OFF, non coesistono
+mineOS installa di default il **modulo NVIDIA open** (`nvidia-driver-XXX-open`), **obbligatorio per le GPU Blackwell (RTX 50xx)**. Conseguenze da conoscere:
+
+| Modulo | Supporta | NON supporta |
+|--------|----------|--------------|
+| **open** (default) | Turing/Ampere/Ada/**Blackwell** (RTX 20/30/40/**50**xx), GTX 16xx | **Pascal e precedenti** (GTX 10xx, GT 8400 GS, ...) |
+| **closed** | Pascal → Ada | **RTX 50xx (Blackwell)** |
+
+- **Non puoi mischiare** su uno stesso rig una RTX 50xx e una GTX 1080/1080 Ti (Pascal): nessun singolo modulo le supporta entrambe.
+- Una GPU non supportata dal modulo caricato viene **rilevata e segnalata** da mineOS (in `first-boot` e `gpu-health`), e la console viene **silenziata** (`loglevel=3` + `kernel.printk`) per evitare che i messaggi `NVRM ... not supported ... (GSP)` la rendano inutilizzabile. Scollega la GPU non supportata o usa un rig omogeneo.
+
+### Piattaforme testate
+
+| Piattaforma | GPU | Esito |
+|-------------|-----|-------|
+| ASUS PRIME Z390-P + i3-9100, BIOS 2820 | RTX 5080 (Blackwell) | **OK** |
+| LianLi AX-B75M-ETH (chipset B75, 2012) | RTX 50xx | **NON funziona** |
+
+**Requisiti per far funzionare le RTX 50xx / multi-GPU moderne:**
+- Installazione in **modalità UEFI** (non Legacy/CSM).
+- **Above 4G Decoding = Enabled** nel BIOS.
+- **Resizable BAR** disponibile e attivo. Il chipset **B75 (2012) NON ha Resizable BAR**: la 5080 dà `VF BAR ... can't assign; no space` e il boot si blocca subito (journal di ~1s). Above 4G da solo **non basta** e non esiste un BIOS aggiornabile per AX-B75M-ETH → piattaforma non utilizzabile con Blackwell.
+- Collega la GPU Blackwell **direttamente allo slot x16**, **non** su riser x1 (su riser x1 la 5080 non veniva vista da `lspci`).
+
+### `pci=realloc` in GRUB
+Il first-boot aggiunge `pci=realloc` a `GRUB_CMDLINE_LINUX_DEFAULT`: chiede al kernel di **riallocare le finestre BAR PCIe** quando il firmware non le assegna correttamente, utile sui rig multi-GPU eterogenei. È innocuo sulle piattaforme che assegnano già bene le BAR; su piattaforme prive di Resizable BAR (es. B75) **non risolve** la mancanza hardware.
+
+---
+
 ## Troubleshooting
 
 ### Il rig non si avvia da USB
@@ -510,23 +686,153 @@ Lo switch riavvia anche l'agent, quindi a seguire arriverà una notifica `MINING
 ### L'installer si ferma o chiede conferme
 - Significa che il seed autoinstall non è stato letto. Verifica di aver buildato con `build-iso.sh` (che aggiunge `autoinstall ds=nocloud;s=/cdrom/server/` a GRUB) e non di aver flashato l'ISO Ubuntu vergine.
 
+### Autoinstall va in crash con "disk full" / errore di partizionamento
+Succede tipicamente su **rig già usati** (partizioni/LVM/RAID residui) o con **più
+dischi** (l'installer sceglie il disco sbagliato o riusa una partizione piccola).
+
+- **Risolto** nelle ISO recenti: l'autoinstall ora
+  1. **azzera** firme e tabella partizioni del disco interno più grande *prima*
+     di installare (`early-commands`, escludendo l'USB di boot);
+  2. usa un **partizionamento esplicito** che riempie tutto il disco
+     (`match: {size: largest}`, `wipe: superblock-recursive`, root `ext4` su tutto
+     lo spazio, niente swapfile) invece di `layout: direct`.
+
+- **Rebuild dell'ISO** con il fix:
+
+```bash
+make rebuild        # rigenera build/mineos-24.04.3-autoinstall-amd64.iso
+```
+
+#### Reinstallazione pulita (procedura consigliata)
+
+1. **Scollega ogni disco/USB non necessario** dal rig: lascia collegati solo
+   l'USB di installazione e il disco su cui vuoi installare. Evita ambiguità.
+2. **(Opzionale ma consigliato) Azzera a mano il disco di destinazione** se in
+   passato hai avuto crash. Avvia in modalità *Try/Shell* o da una live Ubuntu,
+   identifica il disco (NON l'USB!) e puliscilo:
+
+```bash
+lsblk -do NAME,SIZE,MODEL,TRAN      # individua il disco interno (es. /dev/sda, tran=sata/nvme)
+DISK=/dev/sdX                       # <-- il DISCO interno, non l'USB!
+sudo swapoff -a || true
+sudo vgchange -an || true           # disattiva LVM residui
+sudo mdadm --stop --scan || true    # ferma RAID residui
+sudo wipefs -a "$DISK"              # rimuove firme filesystem/partizioni
+sudo sgdisk --zap-all "$DISK"       # azzera GPT/MBR
+sudo dd if=/dev/zero of="$DISK" bs=1M count=32 oflag=direct   # header residui
+sync
+```
+
+3. **Riflasha l'USB** con l'ISO ricostruita e reinstalla:
+
+```bash
+sudo dd if=mineos-24.04.3-autoinstall-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sync
+```
+
+> ⚠️ **`dd` e `wipefs`/`sgdisk` sono distruttivi**: controlla due volte di aver
+> scelto il disco giusto. Cancellano tutto sul device indicato.
+
+4. Dopo l'installazione e il reboot, verifica lo spazio del disco:
+
+```bash
+df -h /                            # la root deve occupare (quasi) tutto il disco
+lsblk                              # controlla che root sia sul disco interno
+```
+
+### `nvidia-gpu i2c timeout` / `ucsi_ccg init failed -110` al boot
+- **Causa**: GPU NVIDIA da mining con funzione USB-C (.3) senza controller I2C reale. Il kernel prova `i2c_nvidia_gpu` + `ucsi_ccg` e fallisce con timeout. **Non blocca** CUDA/mining, ma sporca `tty1`.
+- **Fix automatico** (mineOS recente): i file `/etc/modprobe.d/mineos-nvidia-i2c.conf` e `mineos-nvidia.conf` sono inclusi nell'ISO e applicati al first boot (modprobe + initramfs + GRUB).
+
+**File nell'ISO** (inclusi nel payload `opt` + `etc`):
+
+| Percorso | Contenuto |
+|----------|-----------|
+| `etc/modprobe.d/mineos-nvidia-i2c.conf` | `blacklist i2c_nvidia_gpu`, `blacklist ucsi_ccg` |
+| `etc/modprobe.d/mineos-nvidia.conf` | `options nvidia NVreg_EnableUsbPd=0` |
+| `opt/mineos/bin/fix-nvidia-boot.sh` | Script fix one-shot su rig esistente |
+
+- **Fix su rig già installato** (consigliato):
+
+```bash
+sudo /opt/mineos/bin/fix-nvidia-boot.sh
+sudo reboot
+```
+
+Oppure insieme al fix Pearl:
+
+```bash
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+sudo reboot
+```
+
+- **Fix manuale diretto** (recovery/single-user):
+
+```bash
+sudo tee /etc/modprobe.d/mineos-nvidia-i2c.conf <<'EOF'
+blacklist i2c_nvidia_gpu
+blacklist ucsi_ccg
+install i2c_nvidia_gpu /bin/false
+install ucsi_ccg /bin/false
+EOF
+sudo tee /etc/modprobe.d/mineos-nvidia.conf <<'EOF'
+options nvidia NVreg_EnableUsbPd=0
+EOF
+sudo update-initramfs -u
+sudo reboot
+```
+
+Dopo il reboot gli errori `i2c timeout` / `ucsi_ccg` non dovrebbero più comparire. Verifica che `nvidia-smi` funzioni normalmente.
+
 ### `nvidia-smi` non funziona / nessuna GPU
 - Spesso serve un **reboot** dopo l'installazione driver (mineOS lo segnala con il flag `reboot-required`).
 - Verifica Secure Boot disattivato.
 - Controlla i log: `journalctl -b | grep -i nvidia`.
 
+### GPU mancanti in nvidia-smi (es. RTX 3090 / GTX 1080 non rilevate, solo 1660)
+
+- **Causa tipica**: BAR/memoria PCIe insufficiente su rig multi-GPU eterogenei, riser non visti al boot, **Above 4G Decoding** disabilitato in BIOS.
+- **Diagnostica mineOS**:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh
+cat /opt/mineos/state/gpu-inventory.txt
+nvidia-smi -L
+lspci | grep -iE 'VGA|3D controller'
+```
+
+- Confronta `sysfs_pci` (hardware) vs `nvidia-smi` (driver). Se hardware > driver:
+
+```bash
+sudo /opt/mineos/bin/fix-gpu-detect.sh --rescan-only
+sudo reboot
+```
+
+- **BIOS**: abilita **Above 4G Decoding** / **Large BAR** / **Re-Size BAR Support**.
+- mineOS aggiunge automaticamente `pci=realloc` in GRUB al first boot (multi-GPU).
+
 ### Il first boot diceva "Nessuna GPU rilevata" anche con `nvidia-smi` funzionante
-- **Risolto**: la rilevazione GPU ora è multi-metodo e non dipende solo da `lspci`. In cascata prova: `lspci` → `nvidia-smi`/`rocm-smi` → vendor ID in `/sys/class/drm/card*/device/vendor` (`0x10de` NVIDIA, `0x1002` AMD).
-- Inoltre il first boot **non si interrompe più** per avvisi minori: completa il setup, crea i file di config mancanti e avvia il mining automaticamente.
-- Verifica manuale della rilevazione: `source /opt/mineos/bin/lib/common.sh && detect_gpu_vendor`.
+- **Risolto**: rilevazione multi-metodo `sysfs_pci` → `lspci` (solo VGA/3D) → `sysfs_drm` → `nvidia-smi`.
+- Verifica manuale: `source /opt/mineos/bin/lib/common.sh && gpu_detection_report`
 
 ### Il miner non parte
 ```bash
 journalctl -u mineos-agent -e
 ```
+- **Pearl**: verifica `MINER="srbminer"` e `ALGO="pearlhash"` in `rig.conf` (NON `trex`/`PRL`).
 - Verifica che `MINER` in `rig.conf` corrisponda a un miner installato (`/opt/mineos/miners/<nome>/current`).
 - Verifica `POOL_URL`/`POOL_USER` in `pools.conf` (host/porta corretti dalla dashboard Kryptex).
+- Fix rapido: `sudo /opt/mineos/bin/fix-rig-pearl.sh --reinstall-miners`
 - Esegui un giro a vuoto: `sudo DRY_RUN=1 /opt/mineos/bin/mineos-agent.sh`.
+
+### First boot fallito (203/EXEC) o wizard non completato
+```bash
+journalctl -u mineos-firstboot -e
+sudo chmod +x /opt/mineos/bin/*.sh /opt/mineos/bin/lib/*.sh
+sudo bash /opt/mineos/bin/first-boot-setup.sh --force
+# oppure, se il rig è già configurato:
+sudo /opt/mineos/bin/fix-rig-pearl.sh
+```
 
 ### Hashrate a zero o worker offline su Kryptex
 - Controlla `POOL_USER` nel formato `username.worker`.
@@ -578,3 +884,12 @@ cat /opt/mineos/state/reboot-reasons.log
 Questo progetto è fornito "così com'è", **senza garanzie di alcun tipo**. L'uso è a tuo rischio: gli autori non sono responsabili per danni hardware, perdite economiche, problemi elettrici o di altra natura derivanti dall'uso di mineOS. Verifica sempre la compatibilità del tuo hardware e il rispetto delle normative locali.
 
 I miner di terze parti (T-Rex, lolMiner, SRBMiner) e Kryptex sono soggetti alle rispettive licenze e termini d'uso.
+
+---
+
+## Contribuire e diffondere
+
+Vuoi aiutare a far conoscere mineOS? C'è un piano di diffusione completo (gratuito,
+onesto, senza budget) in **[docs/DIFFUSIONE.md](docs/DIFFUSIONE.md)**: canali
+(GitHub, Reddit, X, YouTube, forum, Discord), contenuti riusabili e come
+presentare il progetto in modo professionale (gratuito, senza fee).

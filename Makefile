@@ -7,7 +7,7 @@
 
 # --- Variabili configurabili (override: `make iso UBUNTU_VERSION=24.04.3`) ---
 PROJECT_NAME     := mineos
-UBUNTU_VERSION   ?= 24.04.2
+UBUNTU_VERSION   ?= 24.04.3
 UBUNTU_ISO_NAME  ?= ubuntu-$(UBUNTU_VERSION)-live-server-amd64.iso
 
 # --- Percorsi -------------------------------------------------------------
@@ -17,7 +17,9 @@ DIST_DIR         := dist
 AUTOINSTALL_DIR  := $(BUILD_DIR)/autoinstall
 
 PAYLOAD          := $(DIST_DIR)/$(PROJECT_NAME)-payload.tar.gz
+# ISO prodotta da build-iso.sh (nome versionato) e nome finale richiesto.
 OUT_ISO          := $(BUILD_DIR)/$(PROJECT_NAME)-$(UBUNTU_VERSION)-autoinstall-amd64.iso
+FINAL_ISO        := $(BUILD_DIR)/mineOS.iso
 UBUNTU_ISO_PATH  := $(WORK_DIR)/$(UBUNTU_ISO_NAME)
 
 # Destinazione per l'installazione locale (utile per test/staging).
@@ -61,14 +63,16 @@ payload: ## Crea il tar.gz di mineOS da iniettare nell'ISO
 	@printf "Payload pronto: $(CYAN)$(PAYLOAD)$(RESET)\n"
 
 # ---------------------------------------------------------------------------
-iso: ## Builda l'ISO completa (scarica l'ISO Ubuntu se assente)
+iso: ## Builda l'ISO completa e la salva come build/mineOS.iso
 	@if [ -f "$(UBUNTU_ISO_PATH)" ]; then \
 		printf "ISO Ubuntu trovata: $(UBUNTU_ISO_PATH)\n"; \
 	else \
 		printf "$(BOLD)ISO Ubuntu assente: verra' scaricata da build-iso.sh$(RESET)\n"; \
 	fi
-	cd $(BUILD_DIR) && ./build-iso.sh
-	@printf "ISO generata: $(CYAN)$(OUT_ISO)$(RESET)\n"
+	cd $(BUILD_DIR) && UBUNTU_VERSION=$(UBUNTU_VERSION) ./build-iso.sh
+	@cp -f "$(OUT_ISO)" "$(FINAL_ISO)"
+	@printf "ISO generata: $(CYAN)$(FINAL_ISO)$(RESET)\n"
+	@printf "Flash con: sudo dd if='$(FINAL_ISO)' of=/dev/sdX bs=4M status=progress oflag=sync\n"
 
 # ---------------------------------------------------------------------------
 rebuild: ## Ricostruisce l'ISO da zero (clean temporanei + payload + iso)
@@ -85,7 +89,7 @@ clean: ## Pulisce file temporanei (work/, dist/, payload)
 
 # ---------------------------------------------------------------------------
 clean-all: clean ## Pulizia totale, inclusi ISO generata e ISO Ubuntu scaricata
-	rm -f $(OUT_ISO)
+	rm -f $(OUT_ISO) $(FINAL_ISO)
 	@printf "Rimossa anche l'ISO generata.\n"
 
 # ---------------------------------------------------------------------------
@@ -102,7 +106,7 @@ install-local: ## Installa mineOS sul sistema corrente (richiede root; usa DESTD
 	@# Abilita i servizi solo per un'installazione reale (DESTDIR vuoto).
 	@if [ -z "$(DESTDIR)" ]; then \
 		systemctl daemon-reload; \
-		systemctl enable mineos-firstboot.service mineos-agent.service mineos-watchdog.service; \
+		systemctl enable mineos-gpu-oc.service mineos-gpu-fan.service mineos-firstboot.service mineos-agent.service mineos-watchdog.service; \
 		systemctl enable mineos-profit-switch.timer; \
 		printf "Servizi abilitati. Riavvia per lanciare il first boot.\n"; \
 	else \

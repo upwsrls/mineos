@@ -1,0 +1,2 @@
+# Segnaposto per versionare la cartella /opt/mineos/logs nel payload dell'ISO.
+# I log reali (mineos.log, driver-install.log, tailscale.log) sono ignorati da git.
